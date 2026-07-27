@@ -208,6 +208,32 @@
     font-size: 13px;
   }
 
+  .subtabs {
+    display: inline-flex;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 3px;
+    margin-bottom: 16px;
+  }
+  .subtab {
+    background: transparent;
+    border: 0;
+    padding: 8px 16px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--mute);
+    cursor: pointer;
+    transition: all 120ms;
+  }
+  .subtab:hover { color: var(--ink-2); }
+  .subtab.active {
+    background: var(--ink);
+    color: var(--paper);
+    font-weight: 500;
+  }
+  .subpanel { display: none; }
+  .subpanel.active { display: block; }
+
   footer {
     margin-top: 40px;
     padding-top: 20px;
@@ -215,6 +241,24 @@
     font-size: 12px;
     color: var(--mute);
     text-align: center;
+  }
+  .credit {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    text-align: center;
+  }
+  .credit .name {
+    font-family: Georgia, serif;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .credit .role {
+    font-size: 12px;
+    color: var(--mute);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 3px;
   }
 
   @media (max-width: 720px) {
@@ -300,41 +344,87 @@
   </section>
 
   <section id="patwari" class="panel">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:60px">S.NO</th>
-            <th style="width:200px">Name of Patwari</th>
-            <th>Villages</th>
-            <th style="width:160px">Total Survey Nos</th>
-            <th style="width:120px">Submitted</th>
-            <th style="width:130px">% Completion</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in patwari_rows %}
-          <tr>
-            <td class="center">{{ loop.index }}</td>
-            <td>{{ row.patwari }}</td>
-            <td class="villages">{{ row.villages_list }}</td>
-            <td class="num">{{ "{:,}".format(row.total) }}</td>
-            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
-            <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td></td>
-            <td>TOTAL</td>
-            <td></td>
-            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
-            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-            <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
-          </tr>
-        </tfoot>
-      </table>
+    <div class="subtabs" role="tablist">
+      <button class="subtab active" data-sub="by-pct">By % Completion</button>
+      <button class="subtab" data-sub="by-count">By Total Submissions</button>
+    </div>
+
+    <div id="by-pct" class="subpanel active">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:60px">S.NO</th>
+              <th style="width:200px">Name of Patwari</th>
+              <th>Villages</th>
+              <th style="width:160px">Total Survey Nos</th>
+              <th style="width:120px">Submitted</th>
+              <th style="width:130px">% Completion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in patwari_by_pct %}
+            <tr>
+              <td class="center">{{ loop.index }}</td>
+              <td>{{ row.patwari }}</td>
+              <td class="villages">{{ row.villages_list }}</td>
+              <td class="num">{{ "{:,}".format(row.total) }}</td>
+              <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td></td>
+              <td>TOTAL</td>
+              <td></td>
+              <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+              <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div id="by-count" class="subpanel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:60px">S.NO</th>
+              <th style="width:200px">Name of Patwari</th>
+              <th>Villages</th>
+              <th style="width:160px">Total Survey Nos</th>
+              <th style="width:120px">Submitted</th>
+              <th style="width:130px">% Completion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in patwari_by_count %}
+            <tr>
+              <td class="center">{{ loop.index }}</td>
+              <td>{{ row.patwari }}</td>
+              <td class="villages">{{ row.villages_list }}</td>
+              <td class="num">{{ "{:,}".format(row.total) }}</td>
+              <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td></td>
+              <td>TOTAL</td>
+              <td></td>
+              <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+              <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -367,6 +457,11 @@
   </section>
 
   <footer>Update AGRISTACK.xlsx and AS_OF.txt in the repo to refresh this dashboard.</footer>
+
+  <div class="credit">
+    <div class="name">Obaid Peerzada</div>
+    <div class="role">Naib Tehsildar, Sumbal &middot; Developed &amp; Maintained</div>
+  </div>
 </div>
 
 <script>
@@ -378,6 +473,17 @@
       panels.forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.getElementById(tab.dataset.target).classList.add('active');
+    });
+  });
+
+  const subtabs = document.querySelectorAll('.subtab');
+  const subpanels = document.querySelectorAll('.subpanel');
+  subtabs.forEach(sub => {
+    sub.addEventListener('click', () => {
+      subtabs.forEach(s => s.classList.remove('active'));
+      subpanels.forEach(p => p.classList.remove('active'));
+      sub.classList.add('active');
+      document.getElementById(sub.dataset.sub).classList.add('active');
     });
   });
 </script>

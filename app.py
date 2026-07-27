@@ -122,29 +122,38 @@ def build_views(df: pd.DataFrame) -> dict:
             "pct": _pct(int(row["submitted"]), int(row["total"])),
         })
 
-    # Patwari-wise — sort by % completion descending
+    # Patwari-wise — build once, produce two sorted views
     p = (df.groupby("patwari", as_index=False)
            .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
                 total=("khasras", "sum"),
                 submitted=("submitted", "sum")))
     p["pct"] = p.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
-    p = p.sort_values(["pct", "submitted"], ascending=[False, False])
-    patwari_rows = []
-    for _, row in p.iterrows():
-        patwari_rows.append({
-            "patwari": row["patwari"],
-            "villages_list": row["villages_list"],
-            "total": int(row["total"]),
-            "submitted": int(row["submitted"]),
-            "pct": float(row["pct"]),
-        })
+
+    def _to_records(frame):
+        out = []
+        for _, row in frame.iterrows():
+            out.append({
+                "patwari": row["patwari"],
+                "villages_list": row["villages_list"],
+                "total": int(row["total"]),
+                "submitted": int(row["submitted"]),
+                "pct": float(row["pct"]),
+            })
+        return out
+
+    patwari_by_pct = _to_records(
+        p.sort_values(["pct", "submitted"], ascending=[False, False])
+    )
+    patwari_by_count = _to_records(
+        p.sort_values(["submitted", "pct"], ascending=[False, False])
+    )
 
     # Not started
     ns = df[df["submitted"] == 0].sort_values(["tehsil", "village"])
     not_started = ns.to_dict("records")
 
-    # Top performer = first row of patwari_rows (already sorted by % desc)
-    top = patwari_rows[0] if patwari_rows else None
+    # Top performer = highest % completion
+    top = patwari_by_pct[0] if patwari_by_pct else None
 
     grand = {
         "tehsils": int(len(t)),
@@ -157,7 +166,8 @@ def build_views(df: pd.DataFrame) -> dict:
     }
     return {
         "tehsil_rows": tehsil_rows,
-        "patwari_rows": patwari_rows,
+        "patwari_by_pct": patwari_by_pct,
+        "patwari_by_count": patwari_by_count,
         "not_started": not_started,
         "top_performer": top,
         "grand": grand,
