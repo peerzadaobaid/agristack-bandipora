@@ -101,26 +101,50 @@ def load_data():
     return df, sheet
 
 
+def _pct(submitted: int, total: int) -> float:
+    return (submitted / total * 100) if total > 0 else 0.0
+
+
 def build_views(df: pd.DataFrame) -> dict:
-    # Tehsil-wise
+    # Tehsil-wise — keep sort by absolute submitted, but add % completion
     t = (df.groupby("tehsil", as_index=False)
            .agg(villages=("village", "count"),
                 total=("khasras", "sum"),
                 submitted=("submitted", "sum"))
            .sort_values("submitted", ascending=False))
-    tehsil_rows = t.to_dict("records")
+    tehsil_rows = []
+    for _, row in t.iterrows():
+        tehsil_rows.append({
+            "tehsil": row["tehsil"],
+            "villages": int(row["villages"]),
+            "total": int(row["total"]),
+            "submitted": int(row["submitted"]),
+            "pct": _pct(int(row["submitted"]), int(row["total"])),
+        })
 
-    # Patwari-wise
+    # Patwari-wise — sort by % completion descending
     p = (df.groupby("patwari", as_index=False)
            .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
                 total=("khasras", "sum"),
-                submitted=("submitted", "sum"))
-           .sort_values("submitted", ascending=False))
-    patwari_rows = p.to_dict("records")
+                submitted=("submitted", "sum")))
+    p["pct"] = p.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
+    p = p.sort_values(["pct", "submitted"], ascending=[False, False])
+    patwari_rows = []
+    for _, row in p.iterrows():
+        patwari_rows.append({
+            "patwari": row["patwari"],
+            "villages_list": row["villages_list"],
+            "total": int(row["total"]),
+            "submitted": int(row["submitted"]),
+            "pct": float(row["pct"]),
+        })
 
     # Not started
     ns = df[df["submitted"] == 0].sort_values(["tehsil", "village"])
     not_started = ns.to_dict("records")
+
+    # Top performer = first row of patwari_rows (already sorted by % desc)
+    top = patwari_rows[0] if patwari_rows else None
 
     grand = {
         "tehsils": int(len(t)),
@@ -129,24 +153,37 @@ def build_views(df: pd.DataFrame) -> dict:
         "total_khasras": int(df["khasras"].sum()),
         "submitted": int(df["submitted"].sum()),
         "not_started": int(len(ns)),
+        "overall_pct": _pct(int(df["submitted"].sum()), int(df["khasras"].sum())),
     }
     return {
         "tehsil_rows": tehsil_rows,
         "patwari_rows": patwari_rows,
         "not_started": not_started,
+        "top_performer": top,
         "grand": grand,
     }
 
 
+def read_as_of() -> str:
+    """Read the data-as-of date from AS_OF.txt if present.
+    Falls back to Excel file mtime."""
+    path = "AS_OF.txt"
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+        if text:
+            return text
+    mtime = datetime.fromtimestamp(os.path.getmtime(EXCEL_PATH))
+    return mtime.strftime("%d %b %Y, %I:%M %p")
+
+
 @app.route("/")
 def index():
-    df, source_sheet = load_data()
+    df, _ = load_data()
     views = build_views(df)
-    mtime = datetime.fromtimestamp(os.path.getmtime(EXCEL_PATH))
     return render_template(
         "index.html",
-        source_sheet=source_sheet,
-        last_updated=mtime.strftime("%d %b %Y, %I:%M %p"),
+        as_of=read_as_of(),
         **views,
     )
 
