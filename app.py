@@ -1,8 +1,9 @@
 """
 AGRISTACK Dashboard — District Bandipora
-Reads the newest snapshot from snapshots/YYYY-MM-DD.xlsx and shows:
-  - Tehsil-wise progress with % completion
-  - Patwari-wise progress (two sorts: by %, by count)
+
+Reads snapshots from snapshots/YYYY-MM-DD.xlsx and shows:
+  - Tehsil-wise: total, daily target, submitted, % completion, additions since a chosen date
+  - Patwari-wise (two sorts): additions since a chosen date
   - Villages not started
 Also serves a password-gated Excel download.
 """
@@ -22,8 +23,8 @@ app = Flask(__name__)
 
 SNAPSHOTS_DIR = "snapshots"
 LEGACY_EXCEL = "AGRISTACK.xlsx"
+DEFAULT_DAILY_TARGET = 19302
 
-# Tolerant column matchers
 COL_MATCHERS = {
     "tehsil":    re.compile(r"tehsil", re.I),
     "village":   re.compile(r"^village$", re.I),
@@ -35,10 +36,10 @@ COL_MATCHERS = {
 
 # ---------- Snapshot discovery ----------
 
-def newest_snapshot():
-    """Return (date, path) of the newest snapshot. Falls back to legacy file."""
+def all_snapshots():
+    """Return [(date, path), ...] sorted newest first."""
+    out = []
     if os.path.isdir(SNAPSHOTS_DIR):
-        candidates = []
         for name in os.listdir(SNAPSHOTS_DIR):
             if not name.endswith(".xlsx") or name.startswith("~"):
                 continue
@@ -47,23 +48,41 @@ def newest_snapshot():
                 d = datetime.strptime(stem, "%Y-%m-%d").date()
             except ValueError:
                 continue
-            candidates.append((d, os.path.join(SNAPSHOTS_DIR, name)))
-        if candidates:
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            return candidates[0]
-    if os.path.exists(LEGACY_EXCEL):
+            out.append((d, os.path.join(SNAPSHOTS_DIR, name)))
+    if not out and os.path.exists(LEGACY_EXCEL):
         mtime = os.path.getmtime(LEGACY_EXCEL)
-        return (datetime.fromtimestamp(mtime).date(), LEGACY_EXCEL)
+        out.append((datetime.fromtimestamp(mtime).date(), LEGACY_EXCEL))
+    out.sort(key=lambda x: x[0], reverse=True)
+    return out
+
+
+def snapshot_for_date(snapshots, target_date):
+    """Return path of the snapshot whose date matches target_date, or None."""
+    for d, p in snapshots:
+        if d == target_date:
+            return p
     return None
+
+
+# ---------- Config ----------
+
+def read_daily_target():
+    if os.path.exists("DAILY_TARGET.txt"):
+        try:
+            with open("DAILY_TARGET.txt", "r", encoding="utf-8") as f:
+                v = int(f.read().strip())
+                return v if v > 0 else DEFAULT_DAILY_TARGET
+        except Exception:
+            pass
+    return DEFAULT_DAILY_TARGET
 
 
 # ---------- Excel loading ----------
 
-_df_cache = {}  # path -> DataFrame
+_df_cache = {}
 
 
 def _pick_sheet(xl):
-    """Prefer Sheet2, then MAIN, then first sheet with all 5 required columns."""
     scored = []
     for name in xl.sheet_names:
         try:
@@ -106,7 +125,6 @@ def _detect_columns(df):
 
 
 def load_snapshot(path):
-    """Load and normalize a snapshot file. Cached by path."""
     if path in _df_cache:
         return _df_cache[path]
     xl = pd.ExcelFile(path)
@@ -126,7 +144,6 @@ def load_snapshot(path):
         df[col] = df[col].astype(str).str.strip()
     df = df[(df["village"] != "") & (df["village"].str.lower() != "nan")]
     _df_cache[path] = df
-    print(f"[load] {path}: {len(df)} rows, sheet '{sheet}'", file=sys.stderr)
     return df
 
 
@@ -136,30 +153,57 @@ def _pct(sub, tot):
     return (sub / tot * 100) if tot > 0 else 0.0
 
 
-def build_views(df):
-    """Aggregate into all dashboard views."""
-    # --- Tehsil-wise (sorted by submitted desc) ---
-    t = (df.groupby("tehsil", as_index=False)
-           .agg(villages=("village", "count"),
-                total=("khasras", "sum"),
-                submitted=("submitted", "sum"))
-           .sort_values("submitted", ascending=False))
+def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
+    """Build all dashboard views.
+    from_df: optional older snapshot for computing 'Additions'.
+    daily_target: district-level daily target for computing per-tehsil targets.
+    """
+    has_additions = from_df is not None
+    district_total = int(current_df["khasras"].sum())
+
+    # Per-tehsil daily target = proportional share of district daily target
+    tehsil_totals = current_df.groupby("tehsil")["khasras"].sum().to_dict()
+    tehsil_daily_target = {
+        t: round((int(total) / district_total) * daily_target) if district_total > 0 else 0
+        for t, total in tehsil_totals.items()
+    }
+
+    # Old-snapshot lookups for additions
+    old_by_tehsil = from_df.groupby("tehsil")["submitted"].sum().to_dict() if has_additions else {}
+    old_by_patwari = from_df.groupby("patwari")["submitted"].sum().to_dict() if has_additions else {}
+
+    # --- Tehsil-wise ---
+    t = (current_df.groupby("tehsil", as_index=False)
+                   .agg(villages=("village", "count"),
+                        total=("khasras", "sum"),
+                        submitted=("submitted", "sum"))
+                   .sort_values("submitted", ascending=False))
     tehsil_rows = []
     for _, row in t.iterrows():
+        additions = None
+        if has_additions:
+            additions = int(row["submitted"]) - int(old_by_tehsil.get(row["tehsil"], 0))
         tehsil_rows.append({
             "tehsil": row["tehsil"],
             "villages": int(row["villages"]),
             "total": int(row["total"]),
+            "daily_target": tehsil_daily_target.get(row["tehsil"], 0),
             "submitted": int(row["submitted"]),
             "pct": _pct(int(row["submitted"]), int(row["total"])),
+            "additions": additions,
         })
 
-    # --- Patwari-wise (two sorts) ---
-    p = (df.groupby("patwari", as_index=False)
-           .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
-                total=("khasras", "sum"),
-                submitted=("submitted", "sum")))
+    # --- Patwari-wise ---
+    p = (current_df.groupby("patwari", as_index=False)
+                   .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
+                        total=("khasras", "sum"),
+                        submitted=("submitted", "sum")))
     p["pct"] = p.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
+    if has_additions:
+        p["additions"] = p["patwari"].map(lambda n: int(old_by_patwari.get(n, 0)))
+        p["additions"] = p["submitted"] - p["additions"]
+    else:
+        p["additions"] = None
 
     def _records(frame):
         return [{
@@ -168,13 +212,14 @@ def build_views(df):
             "total": int(r["total"]),
             "submitted": int(r["submitted"]),
             "pct": float(r["pct"]),
+            "additions": None if r["additions"] is None else int(r["additions"]),
         } for _, r in frame.iterrows()]
 
     patwari_by_pct = _records(p.sort_values(["pct", "submitted"], ascending=[False, False]))
     patwari_by_count = _records(p.sort_values(["submitted", "pct"], ascending=[False, False]))
 
     # --- Not started ---
-    ns = df[df["submitted"] == 0].sort_values(["tehsil", "village"])
+    ns = current_df[current_df["submitted"] == 0].sort_values(["tehsil", "village"])
     not_started = ns.to_dict("records")
 
     top_patwari = patwari_by_count[0] if patwari_by_count else None
@@ -182,13 +227,19 @@ def build_views(df):
 
     grand = {
         "tehsils": int(len(t)),
-        "villages": int(len(df)),
+        "villages": int(len(current_df)),
         "patwaris": int(len(p)),
-        "total_khasras": int(df["khasras"].sum()),
-        "submitted": int(df["submitted"].sum()),
+        "total_khasras": int(current_df["khasras"].sum()),
+        "daily_target": sum(tehsil_daily_target.values()),
+        "submitted": int(current_df["submitted"].sum()),
         "not_started": int(len(ns)),
-        "overall_pct": _pct(int(df["submitted"].sum()), int(df["khasras"].sum())),
+        "overall_pct": _pct(int(current_df["submitted"].sum()), int(current_df["khasras"].sum())),
     }
+    if has_additions:
+        grand["additions"] = int(current_df["submitted"].sum()) - int(from_df["submitted"].sum())
+    else:
+        grand["additions"] = None
+
     return {
         "tehsil_rows": tehsil_rows,
         "patwari_by_pct": patwari_by_pct,
@@ -197,10 +248,11 @@ def build_views(df):
         "top_patwari": top_patwari,
         "top_tehsil": top_tehsil,
         "grand": grand,
+        "has_additions": has_additions,
     }
 
 
-# ---------- Header meta ----------
+# ---------- Helpers ----------
 
 def read_as_of_override():
     if os.path.exists("AS_OF.txt"):
@@ -215,21 +267,80 @@ def format_date(d):
     return d.strftime("%d %b %Y")
 
 
+def format_date_short(d):
+    return d.strftime("%d %b")
+
+
+def parse_date_param(s):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def resolve_dates(snapshots, from_param, to_param):
+    """Given query-string dates and available snapshots, return (from_date, to_date) or (None, to_date).
+    to_date defaults to newest snapshot.
+    from_date defaults to second-newest (if any).
+    """
+    if not snapshots:
+        return None, None
+    dates_available = [d for d, _ in snapshots]
+    to_date = parse_date_param(to_param) if to_param else None
+    if not to_date or to_date not in dates_available:
+        to_date = dates_available[0]  # newest
+    from_date = parse_date_param(from_param) if from_param else None
+    if not from_date or from_date not in dates_available or from_date >= to_date:
+        # Default to next-oldest snapshot before to_date
+        older = [d for d in dates_available if d < to_date]
+        from_date = older[0] if older else None
+    return from_date, to_date
+
+
 # ---------- Routes ----------
 
 @app.route("/")
 def index():
-    snap = newest_snapshot()
-    if not snap:
+    snapshots = all_snapshots()
+    if not snapshots:
         return "No snapshots found. Add a file to snapshots/ folder.", 500
-    snap_date, snap_path = snap
-    df = load_snapshot(snap_path)
-    views = build_views(df)
+
+    from_date, to_date = resolve_dates(snapshots,
+                                        request.args.get("from"),
+                                        request.args.get("to"))
+
+    to_path = snapshot_for_date(snapshots, to_date)
+    current_df = load_snapshot(to_path)
+
+    from_df = None
+    if from_date:
+        from_path = snapshot_for_date(snapshots, from_date)
+        if from_path:
+            from_df = load_snapshot(from_path)
+
+    daily_target = read_daily_target()
+    views = build_views(current_df, from_df, daily_target)
 
     override = read_as_of_override()
-    as_of_display = override if override else format_date(snap_date)
+    as_of_display = override if override else format_date(to_date)
 
-    return render_template("index.html", as_of=as_of_display, **views)
+    # For the dropdowns
+    date_options = [(d.isoformat(), format_date(d)) for d, _ in snapshots]
+
+    additions_label = None
+    if views["has_additions"]:
+        additions_label = f"Additions ({format_date_short(from_date)} → {format_date_short(to_date)})"
+
+    return render_template(
+        "index.html",
+        as_of=as_of_display,
+        date_options=date_options,
+        from_date_iso=from_date.isoformat() if from_date else None,
+        to_date_iso=to_date.isoformat(),
+        additions_label=additions_label,
+        snapshot_count=len(snapshots),
+        **views,
+    )
 
 
 def _check_download_password():
@@ -250,14 +361,21 @@ def download():
             401,
             {"WWW-Authenticate": 'Basic realm="AgriStack Download"'},
         )
-    snap = newest_snapshot()
-    if not snap:
+    snapshots = all_snapshots()
+    if not snapshots:
         return "No snapshots found.", 500
-    snap_date, snap_path = snap
-    df = load_snapshot(snap_path)
-    views = build_views(df)
-    buf = _generate_workbook(views, snap_date)
-    filename = f"AGRISTACK_Dashboard_{snap_date.strftime('%Y-%m-%d')}.xlsx"
+
+    from_date, to_date = resolve_dates(snapshots,
+                                        request.args.get("from"),
+                                        request.args.get("to"))
+    to_path = snapshot_for_date(snapshots, to_date)
+    current_df = load_snapshot(to_path)
+    from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
+    daily_target = read_daily_target()
+    views = build_views(current_df, from_df, daily_target)
+
+    buf = _generate_workbook(views, to_date, from_date)
+    filename = f"AGRISTACK_Dashboard_{to_date.strftime('%Y-%m-%d')}.xlsx"
     return send_file(
         buf,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -266,8 +384,7 @@ def download():
     )
 
 
-def _generate_workbook(views, snap_date):
-    """Generate an xlsx mirroring the dashboard."""
+def _generate_workbook(views, to_date, from_date):
     hdr_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
     hdr_fill = PatternFill(start_color="1F3F2E", end_color="1F3F2E", fill_type="solid")
     hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -289,32 +406,56 @@ def _generate_workbook(views, snap_date):
     wb = Workbook()
     grand = views["grand"]
 
+    additions_hdr = None
+    if views["has_additions"]:
+        additions_hdr = f"Additions ({from_date.strftime('%d %b')} to {to_date.strftime('%d %b')})"
+
     # === TEHSIL WISE ===
     ws1 = wb.active
     ws1.title = "TEHSIL WISE"
-    write_hdr(ws1, ["S.NO", "TEHSIL", "NUMBER OF VILLAGES",
-                    "TOTAL SURVEY NOS", "SUBMITTED", "% COMPLETION"])
+    tehsil_headers = ["S.NO", "TEHSIL", "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
+                      "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
+    if additions_hdr:
+        tehsil_headers.append(additions_hdr)
+    write_hdr(ws1, tehsil_headers)
+
     for i, row in enumerate(views["tehsil_rows"], start=1):
         r = i + 1
-        vals = [i, row["tehsil"], row["villages"], row["total"], row["submitted"], round(row["pct"], 2)]
-        aligns = [center, left, center, center, center, center]
+        vals = [i, row["tehsil"], row["villages"], row["total"],
+                row["daily_target"], row["submitted"], round(row["pct"], 2)]
+        aligns = [center, left, center, center, center, center, center]
+        if additions_hdr:
+            vals.append(row["additions"] if row["additions"] is not None else "—")
+            aligns.append(center)
         for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
             c = ws1.cell(row=r, column=ci, value=v)
             c.alignment = a; c.font = body_font; c.border = border
-            if ci in (3, 4, 5): c.number_format = "#,##0"
-            if ci == 6: c.number_format = '0.00"%"'
+            if ci in (3, 4, 5, 6): c.number_format = "#,##0"
+            if ci == 7: c.number_format = '0.00"%"'
+            if additions_hdr and ci == 8 and isinstance(v, int):
+                c.number_format = "+#,##0;-#,##0;0"
+
     tt = len(views["tehsil_rows"]) + 2
     ws1.cell(row=tt, column=2, value="TOTAL").alignment = left
     ws1.cell(row=tt, column=3, value=grand["villages"]).alignment = center
     ws1.cell(row=tt, column=4, value=grand["total_khasras"]).alignment = center
-    ws1.cell(row=tt, column=5, value=grand["submitted"]).alignment = center
-    ws1.cell(row=tt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
-    for c in range(1, 7):
+    ws1.cell(row=tt, column=5, value=grand["daily_target"]).alignment = center
+    ws1.cell(row=tt, column=6, value=grand["submitted"]).alignment = center
+    ws1.cell(row=tt, column=7, value=round(grand["overall_pct"], 2)).alignment = center
+    if additions_hdr:
+        ws1.cell(row=tt, column=8, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+
+    tot_cols = 8 if additions_hdr else 7
+    for c in range(1, tot_cols + 1):
         cc = ws1.cell(row=tt, column=c)
         cc.font = tot_font; cc.fill = tot_fill; cc.border = border
-        if c in (3, 4, 5): cc.number_format = "#,##0"
-        if c == 6: cc.number_format = '0.00"%"'
-    for i, w in enumerate([7, 18, 20, 22, 16, 16], start=1):
+        if c in (3, 4, 5, 6): cc.number_format = "#,##0"
+        if c == 7: cc.number_format = '0.00"%"'
+        if additions_hdr and c == 8 and isinstance(cc.value, int):
+            cc.number_format = "+#,##0;-#,##0;0"
+    widths = [7, 16, 16, 18, 14, 14, 14]
+    if additions_hdr: widths.append(22)
+    for i, w in enumerate(widths, start=1):
         ws1.column_dimensions[get_column_letter(i)].width = w
     ws1.freeze_panes = "A2"
 
@@ -322,29 +463,45 @@ def _generate_workbook(views, snap_date):
     for title, rows in [("PATWARI BY %", views["patwari_by_pct"]),
                         ("PATWARI BY COUNT", views["patwari_by_count"])]:
         ws = wb.create_sheet(title)
-        write_hdr(ws, ["S.NO", "NAME OF PATWARI", "VILLAGES",
-                       "TOTAL SURVEY NOS", "SUBMITTED", "% COMPLETION"])
+        p_headers = ["S.NO", "NAME OF PATWARI", "VILLAGES", "TOTAL SURVEY NOS",
+                     "SUBMITTED", "% COMPLETION"]
+        if additions_hdr:
+            p_headers.append(additions_hdr)
+        write_hdr(ws, p_headers)
+
         for i, row in enumerate(rows, start=1):
             r = i + 1
-            vals = [i, row["patwari"], row["villages_list"],
-                    row["total"], row["submitted"], round(row["pct"], 2)]
+            vals = [i, row["patwari"], row["villages_list"], row["total"],
+                    row["submitted"], round(row["pct"], 2)]
             aligns = [center, left, left, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
                 c.alignment = a; c.font = body_font; c.border = border
                 if ci in (4, 5): c.number_format = "#,##0"
                 if ci == 6: c.number_format = '0.00"%"'
+                if additions_hdr and ci == 7 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
         pt = len(rows) + 2
         ws.cell(row=pt, column=2, value="TOTAL").alignment = left
         ws.cell(row=pt, column=4, value=grand["total_khasras"]).alignment = center
         ws.cell(row=pt, column=5, value=grand["submitted"]).alignment = center
         ws.cell(row=pt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
-        for c in range(1, 7):
+        if additions_hdr:
+            ws.cell(row=pt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+        tot_cols = 7 if additions_hdr else 6
+        for c in range(1, tot_cols + 1):
             cc = ws.cell(row=pt, column=c)
             cc.font = tot_font; cc.fill = tot_fill; cc.border = border
             if c in (4, 5): cc.number_format = "#,##0"
             if c == 6: cc.number_format = '0.00"%"'
-        for i, w in enumerate([7, 28, 55, 22, 16, 16], start=1):
+            if additions_hdr and c == 7 and isinstance(cc.value, int):
+                cc.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 26, 50, 18, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
 
@@ -362,10 +519,12 @@ def _generate_workbook(views, snap_date):
         ws3.column_dimensions[get_column_letter(i)].width = w
     ws3.freeze_panes = "A2"
 
-    # === META sheet ===
+    # === META ===
     ws4 = wb.create_sheet("META")
     ws4.cell(row=1, column=1, value="Data as of").font = tot_font
-    ws4.cell(row=1, column=2, value=snap_date.strftime("%d %b %Y"))
+    ws4.cell(row=1, column=2, value=to_date.strftime("%d %b %Y"))
+    ws4.cell(row=2, column=1, value="Additions from").font = tot_font
+    ws4.cell(row=2, column=2, value=from_date.strftime("%d %b %Y") if from_date else "—")
     ws4.column_dimensions["A"].width = 18
     ws4.column_dimensions["B"].width = 20
 
