@@ -309,6 +309,26 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
     top_patwari = patwari_by_count[0] if patwari_by_count else None
     top_tehsil = tehsil_rows[0] if tehsil_rows else None
 
+    # Totals for the Checker Wise and Sub-Division Wise footer rows.
+    # Computed from the rows in the view (not district-wide) so they honestly
+    # reflect coverage — if some villages have blank checker/subdivision they're
+    # excluded from these sums.
+    def _totals(rows):
+        if not rows:
+            return None
+        subs = sum(r["submitted"] for r in rows)
+        tot = sum(r["total"] for r in rows)
+        return {
+            "villages": sum(r["villages"] for r in rows),
+            "total": tot,
+            "daily_target": sum(r["daily_target"] for r in rows),
+            "submitted": subs,
+            "pct": _pct(subs, tot),
+            "additions": sum(r["additions"] for r in rows) if has_additions else None,
+        }
+    checker_totals = _totals(checker_rows)
+    subdiv_totals = _totals(subdiv_rows)
+
     grand = {
         "tehsils": int(len(t)),
         "villages": int(len(current_df)),
@@ -329,7 +349,9 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
         "patwari_by_pct": patwari_by_pct,
         "patwari_by_count": patwari_by_count,
         "checker_rows": checker_rows,
+        "checker_totals": checker_totals,
         "subdiv_rows": subdiv_rows,
+        "subdiv_totals": subdiv_totals,
         "not_started": not_started,
         "top_patwari": top_patwari,
         "top_tehsil": top_tehsil,
@@ -606,7 +628,7 @@ def _generate_workbook(views, to_date, from_date):
     ws3.freeze_panes = "A2"
 
     # === NAIB TEHSILDAR WISE (only if data exists) ===
-    def _write_group_sheet(title, rows, name_header):
+    def _write_group_sheet(title, rows, name_header, totals):
         ws = wb.create_sheet(title)
         headers = ["S.NO", name_header, "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
                    "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
@@ -628,6 +650,25 @@ def _generate_workbook(views, to_date, from_date):
                 if ci == 7: c.number_format = '0.00"%"'
                 if additions_hdr and ci == 8 and isinstance(v, int):
                     c.number_format = "+#,##0;-#,##0;0"
+        # TOTAL row
+        if totals:
+            pt = len(rows) + 2
+            ws.cell(row=pt, column=2, value="TOTAL").alignment = left
+            ws.cell(row=pt, column=3, value=totals["villages"]).alignment = center
+            ws.cell(row=pt, column=4, value=totals["total"]).alignment = center
+            ws.cell(row=pt, column=5, value=totals["daily_target"]).alignment = center
+            ws.cell(row=pt, column=6, value=totals["submitted"]).alignment = center
+            ws.cell(row=pt, column=7, value=round(totals["pct"], 2)).alignment = center
+            if additions_hdr:
+                ws.cell(row=pt, column=8, value=totals["additions"] if totals["additions"] is not None else "—").alignment = center
+            tot_col_max = 8 if additions_hdr else 7
+            for c in range(1, tot_col_max + 1):
+                cc = ws.cell(row=pt, column=c)
+                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+                if c in (3, 4, 5, 6): cc.number_format = "#,##0"
+                if c == 7: cc.number_format = '0.00"%"'
+                if additions_hdr and c == 8 and isinstance(cc.value, int):
+                    cc.number_format = "+#,##0;-#,##0;0"
         widths = [7, 24, 18, 18, 14, 14, 14]
         if additions_hdr: widths.append(22)
         for i, w in enumerate(widths, start=1):
@@ -661,9 +702,28 @@ def _generate_workbook(views, to_date, from_date):
         if additions_hdr: widths.append(22)
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
+        # TOTAL row
+        ct = views.get("checker_totals")
+        if ct:
+            pt = len(views["checker_rows"]) + 2
+            ws.cell(row=pt, column=2, value="TOTAL").alignment = left
+            ws.cell(row=pt, column=5, value=ct["total"]).alignment = center
+            ws.cell(row=pt, column=6, value=ct["daily_target"]).alignment = center
+            ws.cell(row=pt, column=7, value=ct["submitted"]).alignment = center
+            ws.cell(row=pt, column=8, value=round(ct["pct"], 2)).alignment = center
+            if additions_hdr:
+                ws.cell(row=pt, column=9, value=ct["additions"] if ct["additions"] is not None else "—").alignment = center
+            tot_col_max = 9 if additions_hdr else 8
+            for c in range(1, tot_col_max + 1):
+                cc = ws.cell(row=pt, column=c)
+                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+                if c in (5, 6, 7): cc.number_format = "#,##0"
+                if c == 8: cc.number_format = '0.00"%"'
+                if additions_hdr and c == 9 and isinstance(cc.value, int):
+                    cc.number_format = "+#,##0;-#,##0;0"
         ws.freeze_panes = "A2"
     if views.get("subdiv_rows"):
-        _write_group_sheet("SUB-DIVISION WISE", views["subdiv_rows"], "SUB-DIVISION")
+        _write_group_sheet("SUB-DIVISION WISE", views["subdiv_rows"], "SUB-DIVISION", views.get("subdiv_totals"))
 
     # === META ===
     ws4 = wb.create_sheet("META")

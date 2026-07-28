@@ -510,7 +510,7 @@
     <div id="by-count" class="subpanel">{{ patwari_table(patwari_by_count) }}</div>
   </section>
 
-  {% macro group_table(rows, name_header) %}
+  {% macro group_table(rows, name_header, totals) %}
   <div class="table-wrap">
     <table>
       <thead>
@@ -539,6 +539,20 @@
         </tr>
         {% endfor %}
       </tbody>
+      {% if totals %}
+      <tfoot>
+        <tr>
+          <td></td>
+          <td>TOTAL</td>
+          <td class="num">{{ "{:,}".format(totals.villages) }}</td>
+          <td class="num">{{ "{:,}".format(totals.total) }}</td>
+          <td class="num">{{ "{:,}".format(totals.daily_target) }}</td>
+          <td class="num">{{ "{:,}".format(totals.submitted) }}</td>
+          <td class="pct">{{ "%.2f"|format(totals.pct) }}%</td>
+          {% if has_additions %}{{ additions_cell(totals.additions) }}{% endif %}
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
   {% endmacro %}
@@ -575,6 +589,21 @@
           </tr>
           {% endfor %}
         </tbody>
+        {% if checker_totals %}
+        <tfoot>
+          <tr>
+            <td></td>
+            <td>TOTAL</td>
+            <td></td>
+            <td></td>
+            <td class="num">{{ "{:,}".format(checker_totals.total) }}</td>
+            <td class="num">{{ "{:,}".format(checker_totals.daily_target) }}</td>
+            <td class="num">{{ "{:,}".format(checker_totals.submitted) }}</td>
+            <td class="pct">{{ "%.2f"|format(checker_totals.pct) }}%</td>
+            {% if has_additions %}{{ additions_cell(checker_totals.additions) }}{% endif %}
+          </tr>
+        </tfoot>
+        {% endif %}
       </table>
     </div>
   </section>
@@ -582,7 +611,7 @@
 
   {% if subdiv_rows %}
   <section id="subdivision" class="panel">
-    {{ group_table(subdiv_rows, "Sub-Division") }}
+    {{ group_table(subdiv_rows, "Sub-Division", subdiv_totals) }}
   </section>
   {% endif %}
 
