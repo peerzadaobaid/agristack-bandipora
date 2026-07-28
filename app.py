@@ -26,11 +26,17 @@ LEGACY_EXCEL = "AGRISTACK.xlsx"
 DEFAULT_DAILY_TARGET = 19302
 
 COL_MATCHERS = {
-    "tehsil":    re.compile(r"tehsil", re.I),
+    "tehsil":    re.compile(r"tehsil(?!dar)", re.I),   # must not match TEHSILDAR
     "village":   re.compile(r"^village$", re.I),
     "patwari":   re.compile(r"patwari", re.I),
     "khasras":   re.compile(r"khasra|survey", re.I),
     "submitted": re.compile(r"^submitted$", re.I),
+}
+
+# Optional — dashboard degrades gracefully if these columns aren't present yet
+OPTIONAL_MATCHERS = {
+    "checker":     re.compile(r"maker|checker", re.I),   # CONCERNED MAKER acts as the checker
+    "subdivision": re.compile(r"sub.?div", re.I),
 }
 
 
@@ -121,6 +127,13 @@ def _detect_columns(df):
     missing = [k for k in COL_MATCHERS if k not in cols]
     if missing:
         raise RuntimeError(f"Missing required columns: {', '.join(missing)}")
+    # Optional columns — dashboard shows extra tabs only when present
+    for logical, rx in OPTIONAL_MATCHERS.items():
+        for c in df.columns:
+            key = str(c).strip()
+            if rx.search(key):
+                cols[logical] = c
+                break
     return cols
 
 
@@ -131,17 +144,30 @@ def load_snapshot(path):
     sheet = _pick_sheet(xl)
     df = pd.read_excel(xl, sheet_name=sheet)
     cols = _detect_columns(df)
-    df = df.rename(columns={
+
+    rename_map = {
         cols["tehsil"]: "tehsil",
         cols["village"]: "village",
         cols["patwari"]: "patwari",
         cols["khasras"]: "khasras",
         cols["submitted"]: "submitted",
-    })[["tehsil", "village", "patwari", "khasras", "submitted"]].copy()
+    }
+    select_cols = ["tehsil", "village", "patwari", "khasras", "submitted"]
+    if "checker" in cols:
+        rename_map[cols["checker"]] = "checker"
+        select_cols.append("checker")
+    if "subdivision" in cols:
+        rename_map[cols["subdivision"]] = "subdivision"
+        select_cols.append("subdivision")
+
+    df = df.rename(columns=rename_map)[select_cols].copy()
     df["khasras"] = pd.to_numeric(df["khasras"], errors="coerce").fillna(0).astype(int)
     df["submitted"] = pd.to_numeric(df["submitted"], errors="coerce").fillna(0).astype(int)
-    for col in ("tehsil", "village", "patwari"):
+    for col in ["tehsil", "village", "patwari"] + \
+               (["checker"] if "checker" in select_cols else []) + \
+               (["subdivision"] if "subdivision" in select_cols else []):
         df[col] = df[col].astype(str).str.strip()
+        df[col] = df[col].replace({"nan": "", "NaN": "", "None": ""})
     df = df[(df["village"] != "") & (df["village"].str.lower() != "nan")]
     _df_cache[path] = df
     return df
@@ -222,6 +248,58 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
     ns = current_df[current_df["submitted"] == 0].sort_values(["tehsil", "village"])
     not_started = ns.to_dict("records")
 
+    # --- Checker wise (optional) ---
+    checker_rows = None
+    if "checker" in current_df.columns and current_df["checker"].str.strip().replace("", pd.NA).notna().any():
+        c_df = current_df[current_df["checker"].str.strip() != ""].copy()
+        c = (c_df.groupby("checker", as_index=False)
+                 .agg(villages=("village", "count"),
+                      total=("khasras", "sum"),
+                      submitted=("submitted", "sum"))
+                 .sort_values("submitted", ascending=False))
+        checker_rows = []
+        for _, row in c.iterrows():
+            additions = None
+            if has_additions:
+                old_val = int(from_df[from_df["checker"] == row["checker"]]["submitted"].sum()) if "checker" in from_df.columns else 0
+                additions = int(row["submitted"]) - old_val
+            daily_tgt = round((int(row["total"]) / district_total) * daily_target) if district_total > 0 else 0
+            checker_rows.append({
+                "name": row["checker"],
+                "villages": int(row["villages"]),
+                "total": int(row["total"]),
+                "daily_target": daily_tgt,
+                "submitted": int(row["submitted"]),
+                "pct": _pct(int(row["submitted"]), int(row["total"])),
+                "additions": additions,
+            })
+
+    # --- Sub-Division wise (optional) ---
+    subdiv_rows = None
+    if "subdivision" in current_df.columns and current_df["subdivision"].str.strip().replace("", pd.NA).notna().any():
+        s_df = current_df[current_df["subdivision"].str.strip() != ""].copy()
+        s = (s_df.groupby("subdivision", as_index=False)
+                 .agg(villages=("village", "count"),
+                      total=("khasras", "sum"),
+                      submitted=("submitted", "sum"))
+                 .sort_values("submitted", ascending=False))
+        subdiv_rows = []
+        for _, row in s.iterrows():
+            additions = None
+            if has_additions:
+                old_val = int(from_df[from_df["subdivision"] == row["subdivision"]]["submitted"].sum()) if "subdivision" in from_df.columns else 0
+                additions = int(row["submitted"]) - old_val
+            daily_tgt = round((int(row["total"]) / district_total) * daily_target) if district_total > 0 else 0
+            subdiv_rows.append({
+                "name": row["subdivision"],
+                "villages": int(row["villages"]),
+                "total": int(row["total"]),
+                "daily_target": daily_tgt,
+                "submitted": int(row["submitted"]),
+                "pct": _pct(int(row["submitted"]), int(row["total"])),
+                "additions": additions,
+            })
+
     top_patwari = patwari_by_count[0] if patwari_by_count else None
     top_tehsil = tehsil_rows[0] if tehsil_rows else None
 
@@ -244,6 +322,8 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
         "tehsil_rows": tehsil_rows,
         "patwari_by_pct": patwari_by_pct,
         "patwari_by_count": patwari_by_count,
+        "checker_rows": checker_rows,
+        "subdiv_rows": subdiv_rows,
         "not_started": not_started,
         "top_patwari": top_patwari,
         "top_tehsil": top_tehsil,
@@ -518,6 +598,40 @@ def _generate_workbook(views, to_date, from_date):
     for i, w in enumerate([7, 28, 18, 28], start=1):
         ws3.column_dimensions[get_column_letter(i)].width = w
     ws3.freeze_panes = "A2"
+
+    # === NAIB TEHSILDAR WISE (only if data exists) ===
+    def _write_group_sheet(title, rows, name_header):
+        ws = wb.create_sheet(title)
+        headers = ["S.NO", name_header, "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
+                   "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
+        if additions_hdr:
+            headers.append(additions_hdr)
+        write_hdr(ws, headers)
+        for i, row in enumerate(rows, start=1):
+            r = i + 1
+            vals = [i, row["name"], row["villages"], row["total"],
+                    row["daily_target"], row["submitted"], round(row["pct"], 2)]
+            aligns = [center, left, center, center, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+                if ci in (3, 4, 5, 6): c.number_format = "#,##0"
+                if ci == 7: c.number_format = '0.00"%"'
+                if additions_hdr and ci == 8 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 24, 18, 18, 14, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+    if views.get("checker_rows"):
+        _write_group_sheet("CHECKER WISE", views["checker_rows"], "CHECKER")
+    if views.get("subdiv_rows"):
+        _write_group_sheet("SUB-DIVISION WISE", views["subdiv_rows"], "SUB-DIVISION")
 
     # === META ===
     ws4 = wb.create_sheet("META")

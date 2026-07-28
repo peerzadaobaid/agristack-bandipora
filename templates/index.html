@@ -396,6 +396,8 @@
   <div class="tabs" role="tablist">
     <button class="tab active" data-target="tehsil">Tehsil Wise</button>
     <button class="tab" data-target="patwari">Patwari Wise</button>
+    {% if checker_rows %}<button class="tab" data-target="checker">Checker Wise</button>{% endif %}
+    {% if subdiv_rows %}<button class="tab" data-target="subdivision">Sub-Division Wise</button>{% endif %}
     <button class="tab" data-target="not-started">Not Started</button>
   </div>
 
@@ -507,6 +509,51 @@
     <div id="by-pct" class="subpanel active">{{ patwari_table(patwari_by_pct) }}</div>
     <div id="by-count" class="subpanel">{{ patwari_table(patwari_by_count) }}</div>
   </section>
+
+  {% macro group_table(rows, name_header) %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:55px">S.NO</th>
+          <th>{{ name_header }}</th>
+          <th style="width:90px">Villages</th>
+          <th style="width:130px">Total Survey Nos</th>
+          <th style="width:110px">Daily Target</th>
+          <th style="width:110px">Submitted</th>
+          <th style="width:110px">% Completion</th>
+          {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="center">{{ loop.index }}</td>
+          <td>{{ row.name }}</td>
+          <td class="num">{{ "{:,}".format(row.villages) }}</td>
+          <td class="num">{{ "{:,}".format(row.total) }}</td>
+          <td class="num">{{ "{:,}".format(row.daily_target) }}</td>
+          <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+          <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+          {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endmacro %}
+
+  {% if checker_rows %}
+  <section id="checker" class="panel">
+    {{ group_table(checker_rows, "Checker") }}
+  </section>
+  {% endif %}
+
+  {% if subdiv_rows %}
+  <section id="subdivision" class="panel">
+    {{ group_table(subdiv_rows, "Sub-Division") }}
+  </section>
+  {% endif %}
 
   <section id="not-started" class="panel">
     <div class="not-started-note">
