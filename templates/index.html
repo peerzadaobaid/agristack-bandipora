@@ -15,10 +15,8 @@
     --rule: #D6D1C2;
     --rule-soft: #E8E3D3;
     --terra: #A54B2A;
-    --brass: #B08A2E;
     --stripe: #FAF7EF;
     --tint-good: #E8EEDE;
-    --pos: #2E6B3E;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -106,11 +104,6 @@
     font-variant-numeric: tabular-nums;
   }
   .card .figures strong { color: var(--ink); font-weight: 500; }
-  .card .delta {
-    color: var(--pos);
-    font-weight: 500;
-  }
-  .card .delta.zero { color: var(--mute); }
 
   .meta {
     color: var(--mute);
@@ -239,16 +232,6 @@
     font-size: 15px;
     color: var(--ink);
   }
-  td.change {
-    text-align: right;
-    font-family: Georgia, serif;
-    font-size: 15px;
-    color: var(--pos);
-    font-weight: 500;
-  }
-  td.change.zero { color: var(--mute); font-weight: 400; }
-  td.change.na { color: var(--mute); font-weight: 400; }
-  td.change.neg { color: var(--terra); }
 
   tfoot td {
     background: var(--paper);
@@ -257,7 +240,7 @@
     font-weight: 600;
     color: var(--ink);
   }
-  tfoot td.num, tfoot td.pct, tfoot td.change {
+  tfoot td.num, tfoot td.pct {
     font-family: Georgia, serif;
     font-size: 16px;
   }
@@ -327,33 +310,18 @@
       <aside class="card">
         <div class="lbl">Top Patwari</div>
         <div class="name">{{ top_patwari.patwari }}</div>
-        <div class="figures">
-          <strong>{{ "{:,}".format(top_patwari.submitted) }}</strong> submitted
-          {% if has_history and top_patwari.change is not none %}
-            &middot; <span class="delta {% if top_patwari.change == 0 %}zero{% endif %}">{% if top_patwari.change > 0 %}+{% endif %}{{ top_patwari.change }}</span> in last {{ gap_days }}d
-          {% endif %}
-        </div>
+        <div class="figures"><strong>{{ "{:,}".format(top_patwari.submitted) }}</strong> submitted &middot; <strong>{{ "%.2f"|format(top_patwari.pct) }}%</strong></div>
       </aside>
       {% endif %}
       {% if top_tehsil %}
       <aside class="card">
         <div class="lbl">Top Tehsil</div>
         <div class="name">{{ top_tehsil.tehsil }}</div>
-        <div class="figures">
-          <strong>{{ "{:,}".format(top_tehsil.submitted) }}</strong> submitted
-          {% if has_history and top_tehsil.change is not none %}
-            &middot; <span class="delta {% if top_tehsil.change == 0 %}zero{% endif %}">{% if top_tehsil.change > 0 %}+{% endif %}{{ top_tehsil.change }}</span> in last {{ gap_days }}d
-          {% endif %}
-        </div>
+        <div class="figures"><strong>{{ "{:,}".format(top_tehsil.submitted) }}</strong> submitted &middot; <strong>{{ "%.2f"|format(top_tehsil.pct) }}%</strong></div>
       </aside>
       {% endif %}
     </div>
-    <div class="meta">
-      Data as of: <strong>{{ as_of }}</strong>
-      {% if compared_with %}
-        &middot; Compared with: <strong>{{ compared_with }}</strong> ({{ gap_days }} day{{ 's' if gap_days != 1 else '' }})
-      {% endif %}
-    </div>
+    <div class="meta">Data as of: <strong>{{ as_of }}</strong></div>
   </header>
 
   <section class="stats">
@@ -370,21 +338,6 @@
     <button class="tab" data-target="not-started">Not Started</button>
   </div>
 
-  {# --- macros for change cell --- #}
-  {% macro change_cell(val) %}
-    {% if val is none %}
-      <td class="change na">—</td>
-    {% elif val == 0 %}
-      <td class="change zero">0</td>
-    {% elif val > 0 %}
-      <td class="change">+{{ val }}</td>
-    {% else %}
-      <td class="change neg">{{ val }}</td>
-    {% endif %}
-  {% endmacro %}
-
-  {% set change_hdr = "Change (last " ~ gap_days ~ " day" ~ ('s' if gap_days != 1 else '') ~ ")" if has_history else "Change" %}
-
   <section id="tehsil" class="panel active">
     <div class="table-wrap">
       <table>
@@ -392,11 +345,10 @@
           <tr>
             <th style="width:60px">S.NO</th>
             <th>Tehsil</th>
-            <th style="width:110px">Villages</th>
-            <th style="width:150px">Total Survey Nos</th>
-            <th style="width:110px">Submitted</th>
-            <th style="width:120px">% Completion</th>
-            <th style="width:150px">{{ change_hdr }}</th>
+            <th style="width:120px">Villages</th>
+            <th style="width:160px">Total Survey Nos</th>
+            <th style="width:120px">Submitted</th>
+            <th style="width:130px">% Completion</th>
           </tr>
         </thead>
         <tbody>
@@ -408,7 +360,6 @@
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
-            {{ change_cell(row.change) }}
           </tr>
           {% endfor %}
         </tbody>
@@ -420,7 +371,6 @@
             <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
             <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
-            {{ change_cell(grand.change) }}
           </tr>
         </tfoot>
       </table>
@@ -431,9 +381,6 @@
     <div class="subtabs" role="tablist">
       <button class="subtab active" data-sub="by-pct">By % Completion</button>
       <button class="subtab" data-sub="by-count">By Total Submissions</button>
-      {% if patwari_by_recent %}
-      <button class="subtab" data-sub="by-recent">By Recent Activity</button>
-      {% endif %}
     </div>
 
     {% macro patwari_table(rows) %}
@@ -442,12 +389,11 @@
         <thead>
           <tr>
             <th style="width:60px">S.NO</th>
-            <th style="width:180px">Name of Patwari</th>
+            <th style="width:200px">Name of Patwari</th>
             <th>Villages</th>
-            <th style="width:150px">Total Survey Nos</th>
-            <th style="width:110px">Submitted</th>
-            <th style="width:120px">% Completion</th>
-            <th style="width:150px">{{ change_hdr }}</th>
+            <th style="width:160px">Total Survey Nos</th>
+            <th style="width:120px">Submitted</th>
+            <th style="width:130px">% Completion</th>
           </tr>
         </thead>
         <tbody>
@@ -459,7 +405,6 @@
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
-            {{ change_cell(row.change) }}
           </tr>
           {% endfor %}
         </tbody>
@@ -471,7 +416,6 @@
             <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
             <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
-            {{ change_cell(grand.change) }}
           </tr>
         </tfoot>
       </table>
@@ -480,9 +424,6 @@
 
     <div id="by-pct" class="subpanel active">{{ patwari_table(patwari_by_pct) }}</div>
     <div id="by-count" class="subpanel">{{ patwari_table(patwari_by_count) }}</div>
-    {% if patwari_by_recent %}
-    <div id="by-recent" class="subpanel">{{ patwari_table(patwari_by_recent) }}</div>
-    {% endif %}
   </section>
 
   <section id="not-started" class="panel">
@@ -570,7 +511,6 @@
         return;
       }
       sessionStorage.setItem('dl_pass', password);
-      // Extract filename from Content-Disposition if present
       let filename = 'AGRISTACK_Dashboard.xlsx';
       const disp = response.headers.get('Content-Disposition');
       if (disp) {
