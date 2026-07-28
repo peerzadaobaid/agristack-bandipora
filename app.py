@@ -252,11 +252,15 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
     checker_rows = None
     if "checker" in current_df.columns and current_df["checker"].str.strip().replace("", pd.NA).notna().any():
         c_df = current_df[current_df["checker"].str.strip() != ""].copy()
-        c = (c_df.groupby("checker", as_index=False)
-                 .agg(villages=("village", "count"),
-                      total=("khasras", "sum"),
-                      submitted=("submitted", "sum"))
-                 .sort_values("submitted", ascending=False))
+        agg_dict = {
+            "villages": ("village", "count"),
+            "villages_list": ("village", lambda s: ", ".join(sorted(s.tolist()))),
+            "total": ("khasras", "sum"),
+            "submitted": ("submitted", "sum"),
+        }
+        if "subdivision" in c_df.columns:
+            agg_dict["subdivisions"] = ("subdivision", lambda s: " / ".join(sorted(set(x for x in s if x))))
+        c = c_df.groupby("checker", as_index=False).agg(**agg_dict).sort_values("submitted", ascending=False)
         checker_rows = []
         for _, row in c.iterrows():
             additions = None
@@ -266,6 +270,8 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
             daily_tgt = round((int(row["total"]) / district_total) * daily_target) if district_total > 0 else 0
             checker_rows.append({
                 "name": row["checker"],
+                "subdivision": row.get("subdivisions", "") if "subdivision" in c_df.columns else "",
+                "villages_list": row["villages_list"],
                 "villages": int(row["villages"]),
                 "total": int(row["total"]),
                 "daily_target": daily_tgt,
@@ -629,7 +635,33 @@ def _generate_workbook(views, to_date, from_date):
         ws.freeze_panes = "A2"
 
     if views.get("checker_rows"):
-        _write_group_sheet("CHECKER WISE", views["checker_rows"], "CHECKER")
+        ws = wb.create_sheet("CHECKER WISE")
+        headers = ["S.NO", "CHECKER", "SUB-DIVISION", "VILLAGES",
+                   "TOTAL SURVEY NOS", "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
+        if additions_hdr:
+            headers.append(additions_hdr)
+        write_hdr(ws, headers)
+        for i, row in enumerate(views["checker_rows"], start=1):
+            r = i + 1
+            vals = [i, row["name"], row["subdivision"], row["villages_list"],
+                    row["total"], row["daily_target"], row["submitted"],
+                    round(row["pct"], 2)]
+            aligns = [center, left, left, left, center, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+                if ci in (5, 6, 7): c.number_format = "#,##0"
+                if ci == 8: c.number_format = '0.00"%"'
+                if additions_hdr and ci == 9 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 32, 14, 46, 16, 14, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
     if views.get("subdiv_rows"):
         _write_group_sheet("SUB-DIVISION WISE", views["subdiv_rows"], "SUB-DIVISION")
 

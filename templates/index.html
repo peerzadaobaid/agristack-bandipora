@@ -545,7 +545,38 @@
 
   {% if checker_rows %}
   <section id="checker" class="panel">
-    {{ group_table(checker_rows, "Checker") }}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:55px">S.NO</th>
+            <th style="width:220px">Checker</th>
+            <th style="width:110px">Sub-Division</th>
+            <th>Villages</th>
+            <th style="width:130px">Total Survey Nos</th>
+            <th style="width:110px">Daily Target</th>
+            <th style="width:100px">Submitted</th>
+            <th style="width:110px">% Completion</th>
+            {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in checker_rows %}
+          <tr>
+            <td class="center">{{ loop.index }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.subdivision }}</td>
+            <td class="villages">{{ row.villages_list }}</td>
+            <td class="num">{{ "{:,}".format(row.total) }}</td>
+            <td class="num">{{ "{:,}".format(row.daily_target) }}</td>
+            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+            <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+            {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
   {% endif %}
 
