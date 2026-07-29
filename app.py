@@ -244,6 +244,17 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
     patwari_by_pct = _records(p.sort_values(["pct", "submitted"], ascending=[False, False]))
     patwari_by_count = _records(p.sort_values(["submitted", "pct"], ascending=[False, False]))
 
+    # --- Village-wise (flat list, grouped by tehsil then village) ---
+    v_df = current_df[["village", "tehsil", "patwari", "khasras", "submitted"]].copy()
+    v_df = v_df.sort_values(["tehsil", "village"], kind="mergesort").reset_index(drop=True)
+    village_rows = [{
+        "village": r["village"],
+        "tehsil": r["tehsil"],
+        "patwari": r["patwari"],
+        "total": int(r["khasras"]),
+        "submitted": int(r["submitted"]),
+    } for _, r in v_df.iterrows()]
+
     # --- Not started ---
     ns = current_df[current_df["submitted"] == 0].sort_values(["tehsil", "village"])
     not_started = ns.to_dict("records")
@@ -352,6 +363,7 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
         "checker_totals": checker_totals,
         "subdiv_rows": subdiv_rows,
         "subdiv_totals": subdiv_totals,
+        "village_rows": village_rows,
         "not_started": not_started,
         "top_patwari": top_patwari,
         "top_tehsil": top_tehsil,
@@ -612,6 +624,30 @@ def _generate_workbook(views, to_date, from_date):
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
+
+    # === VILLAGE WISE ===
+    ws_v = wb.create_sheet("VILLAGE WISE")
+    write_hdr(ws_v, ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "NAME OF PATWARI", "SUBMITTED"])
+    for i, row in enumerate(views["village_rows"], start=1):
+        r = i + 1
+        vals = [i, row["tehsil"], row["village"], row["total"], row["patwari"], row["submitted"]]
+        aligns = [center, left, left, center, left, center]
+        for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+            c = ws_v.cell(row=r, column=ci, value=v)
+            c.alignment = a; c.font = body_font; c.border = border
+            if ci in (4, 6): c.number_format = "#,##0"
+    # TOTAL row
+    vt = len(views["village_rows"]) + 2
+    ws_v.cell(row=vt, column=2, value="TOTAL").alignment = left
+    ws_v.cell(row=vt, column=4, value=grand["total_khasras"]).alignment = center
+    ws_v.cell(row=vt, column=6, value=grand["submitted"]).alignment = center
+    for c in range(1, 7):
+        cc = ws_v.cell(row=vt, column=c)
+        cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+        if c in (4, 6): cc.number_format = "#,##0"
+    for i, w in enumerate([7, 14, 28, 20, 28, 16], start=1):
+        ws_v.column_dimensions[get_column_letter(i)].width = w
+    ws_v.freeze_panes = "A2"
 
     # === NOT STARTED ===
     ws3 = wb.create_sheet("NOT STARTED")

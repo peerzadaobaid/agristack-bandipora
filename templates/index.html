@@ -398,6 +398,7 @@
     <button class="tab" data-target="patwari">Patwari Wise</button>
     {% if checker_rows %}<button class="tab" data-target="checker">Checker Wise</button>{% endif %}
     {% if subdiv_rows %}<button class="tab" data-target="subdivision">Sub-Division Wise</button>{% endif %}
+    <button class="tab" data-target="village">Village Wise</button>
     <button class="tab" data-target="not-started">Not Started</button>
   </div>
 
@@ -614,6 +615,45 @@
     {{ group_table(subdiv_rows, "Sub-Division", subdiv_totals) }}
   </section>
   {% endif %}
+
+  <section id="village" class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:60px">S.NO</th>
+            <th style="width:120px">Tehsil</th>
+            <th>Village</th>
+            <th style="width:160px">Total Survey Nos</th>
+            <th style="width:220px">Name of Patwari</th>
+            <th style="width:140px">Submitted</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in village_rows %}
+          <tr>
+            <td class="center">{{ loop.index }}</td>
+            <td>{{ row.tehsil }}</td>
+            <td>{{ row.village }}</td>
+            <td class="num">{{ "{:,}".format(row.total) }}</td>
+            <td>{{ row.patwari }}</td>
+            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td></td>
+            <td></td>
+            <td>TOTAL</td>
+            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+            <td></td>
+            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </section>
 
   <section id="not-started" class="panel">
     <div class="not-started-note">
