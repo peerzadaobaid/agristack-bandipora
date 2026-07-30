@@ -58,6 +58,43 @@
   }
   .dl-btn:hover { background: #2C5040; }
   .dl-btn:disabled { background: var(--mute); cursor: not-allowed; }
+  .dl-btn.secondary {
+    background: var(--paper);
+    color: var(--ink);
+    border: 1px solid var(--ink);
+  }
+  .dl-btn.secondary:hover { background: var(--tint-good); }
+
+  .download-bar {
+    margin-top: 32px;
+    padding: 18px 20px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .download-bar .lbl {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-2);
+    font-weight: 500;
+  }
+  .download-bar select {
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    min-width: 200px;
+  }
+  .download-bar select:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .download-bar .spacer { flex: 1; }
 
   .head-row {
     display: grid;
@@ -344,7 +381,6 @@
 <div class="wrap">
   <div class="top-bar">
     <div class="wordmark">AgriStack</div>
-    <button type="button" class="dl-btn" id="dl-btn">Download Excel</button>
   </div>
 
   <header>
@@ -686,6 +722,23 @@
     </div>
   </section>
 
+  <div class="download-bar">
+    <span class="lbl">Download</span>
+    <select id="dl-view">
+      <option value="all">All pages</option>
+      <option value="tehsil">Tehsil Wise</option>
+      <option value="patwari-pct">Patwari Wise — By %</option>
+      <option value="patwari-count">Patwari Wise — By Count</option>
+      {% if checker_rows %}<option value="checker">Checker Wise</option>{% endif %}
+      {% if subdiv_rows %}<option value="subdivision">Sub-Division Wise</option>{% endif %}
+      <option value="village">Village Wise</option>
+      <option value="not-started">Not Started</option>
+    </select>
+    <span class="spacer"></span>
+    <button type="button" class="dl-btn" id="dl-excel-btn">Download Excel</button>
+    <button type="button" class="dl-btn secondary" id="dl-pdf-btn">Download PDF</button>
+  </div>
+
   <footer>Add a dated snapshot to snapshots/ folder to refresh this dashboard.</footer>
 
   <div class="credit">
@@ -723,23 +776,28 @@
     rangeForm.addEventListener('change', () => rangeForm.submit());
   }
 
-  // Download button — prompts for password, remembers within session, includes date range
-  const dlBtn = document.getElementById('dl-btn');
-  dlBtn.addEventListener('click', async () => {
+  // Downloads — Excel and PDF, both password-gated, both respect the view + date-range dropdowns
+  async function triggerDownload(kind, btn) {
+    // kind: 'xlsx' | 'pdf'
     let password = sessionStorage.getItem('dl_pass');
     if (!password) {
       password = prompt('Enter download password:');
       if (!password) return;
     }
-    const originalText = dlBtn.textContent;
-    dlBtn.textContent = 'Downloading…';
-    dlBtn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = kind === 'pdf' ? 'Building PDF…' : 'Downloading…';
+    btn.disabled = true;
+    // Also disable the other button while one is running
+    const otherBtn = kind === 'pdf' ? document.getElementById('dl-excel-btn') : document.getElementById('dl-pdf-btn');
+    if (otherBtn) otherBtn.disabled = true;
     try {
       const auth = btoa('user:' + password);
-      // Pass current URL's date-range params through to the download
+      const view = document.getElementById('dl-view').value;
+      // Pass current URL's date-range params through
       const params = new URLSearchParams(window.location.search);
-      const dlUrl = '/download.xlsx' + (params.toString() ? '?' + params.toString() : '');
-      const response = await fetch(dlUrl, {
+      params.set('view', view);
+      const url = `/download.${kind}?${params.toString()}`;
+      const response = await fetch(url, {
         headers: { 'Authorization': 'Basic ' + auth }
       });
       if (response.status === 401) {
@@ -752,28 +810,32 @@
         return;
       }
       sessionStorage.setItem('dl_pass', password);
-      let filename = 'AGRISTACK_Dashboard.xlsx';
+      let filename = `AGRISTACK_Dashboard.${kind}`;
       const disp = response.headers.get('Content-Disposition');
       if (disp) {
         const match = disp.match(/filename[^;=\n]*=(?:UTF-8'')?([^;\n]*)/);
         if (match) filename = decodeURIComponent(match[1].replace(/['"]/g, '').trim());
       }
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      const bloburl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = bloburl;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTimeout(() => URL.revokeObjectURL(bloburl), 1000);
     } catch (err) {
       alert('Download error: ' + err.message);
     } finally {
-      dlBtn.textContent = originalText;
-      dlBtn.disabled = false;
+      btn.textContent = originalText;
+      btn.disabled = false;
+      if (otherBtn) otherBtn.disabled = false;
     }
-  });
+  }
+
+  document.getElementById('dl-excel-btn').addEventListener('click', function(){ triggerDownload('xlsx', this); });
+  document.getElementById('dl-pdf-btn').addEventListener('click', function(){ triggerDownload('pdf', this); });
 </script>
 </body>
 </html>

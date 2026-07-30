@@ -18,6 +18,7 @@ from flask import Flask, render_template, request, Response, send_file
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from xhtml2pdf import pisa
 
 app = Flask(__name__)
 
@@ -484,18 +485,11 @@ def _check_download_password():
     return True
 
 
-@app.route("/download.xlsx")
-def download():
-    if not _check_download_password():
-        return Response(
-            "Authentication required",
-            401,
-            {"WWW-Authenticate": 'Basic realm="AgriStack Download"'},
-        )
+def _resolve_download_context():
+    """Common setup shared by download.xlsx and download.pdf."""
     snapshots = all_snapshots()
     if not snapshots:
-        return "No snapshots found.", 500
-
+        return None
     from_date, to_date = resolve_dates(snapshots,
                                         request.args.get("from"),
                                         request.args.get("to"))
@@ -504,9 +498,51 @@ def download():
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
     daily_target = read_daily_target()
     views = build_views(current_df, from_df, daily_target)
+    return {
+        "views": views,
+        "to_date": to_date,
+        "from_date": from_date,
+        "gap_days": (to_date - from_date).days if from_date else 0,
+    }
 
-    buf = _generate_workbook(views, to_date, from_date)
-    filename = f"AGRISTACK_Dashboard_{to_date.strftime('%Y-%m-%d')}.xlsx"
+
+def _panels_for_view(views, view_key):
+    """Return a list of {title, type, rows} for the given view_key.
+    'all' returns every populated panel in dashboard order."""
+    all_panels = [
+        ("Tehsil Wise", "tehsil", views.get("tehsil_rows"), "tehsil"),
+        ("Patwari Wise — By % Completion", "patwari", views.get("patwari_by_pct"), "patwari-pct"),
+        ("Patwari Wise — By Total Submissions", "patwari", views.get("patwari_by_count"), "patwari-count"),
+        ("Checker Wise", "checker", views.get("checker_rows"), "checker"),
+        ("Sub-Division Wise", "subdivision", views.get("subdiv_rows"), "subdivision"),
+        ("Village Wise", "village", views.get("village_rows"), "village"),
+        ("Not Started Villages", "not-started", views.get("not_started"), "not-started"),
+    ]
+    out = []
+    for title, ptype, rows, key in all_panels:
+        if rows is None:
+            continue
+        if view_key != "all" and key != view_key:
+            continue
+        out.append({"title": title, "type": ptype, "rows": rows, "key": key})
+    return out
+
+
+@app.route("/download.xlsx")
+def download():
+    if not _check_download_password():
+        return Response(
+            "Authentication required",
+            401,
+            {"WWW-Authenticate": 'Basic realm="AgriStack Download"'},
+        )
+    ctx = _resolve_download_context()
+    if not ctx:
+        return "No snapshots found.", 500
+    view_key = request.args.get("view", "all")
+    buf = _generate_workbook(ctx["views"], ctx["to_date"], ctx["from_date"], view_key)
+    tail = "" if view_key == "all" else f"_{view_key}"
+    filename = f"AGRISTACK_Dashboard_{ctx['to_date'].strftime('%Y-%m-%d')}{tail}.xlsx"
     return send_file(
         buf,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -515,7 +551,54 @@ def download():
     )
 
 
-def _generate_workbook(views, to_date, from_date):
+@app.route("/download.pdf")
+def download_pdf():
+    if not _check_download_password():
+        return Response(
+            "Authentication required",
+            401,
+            {"WWW-Authenticate": 'Basic realm="AgriStack Download"'},
+        )
+    ctx = _resolve_download_context()
+    if not ctx:
+        return "No snapshots found.", 500
+    view_key = request.args.get("view", "tehsil")
+    panels = _panels_for_view(ctx["views"], view_key)
+    if not panels:
+        return "No data for this view.", 400
+
+    additions_label = None
+    if ctx["gap_days"] > 0:
+        additions_label = f"Additions ({ctx['from_date'].strftime('%d %b')} → {ctx['to_date'].strftime('%d %b')})"
+
+    html = render_template(
+        "print.html",
+        panels=panels,
+        as_of=format_date(ctx["to_date"]),
+        from_date_display=format_date(ctx["from_date"]) if ctx["from_date"] else None,
+        gap_days=ctx["gap_days"],
+        has_additions=ctx["views"]["has_additions"],
+        additions_label=additions_label,
+        grand=ctx["views"]["grand"],
+        checker_totals=ctx["views"].get("checker_totals"),
+        subdiv_totals=ctx["views"].get("subdiv_totals"),
+    )
+    buf = io.BytesIO()
+    result = pisa.CreatePDF(html, dest=buf)
+    if result.err:
+        return "PDF generation failed", 500
+    buf.seek(0)
+    tail = "all" if view_key == "all" else view_key
+    filename = f"AGRISTACK_Dashboard_{ctx['to_date'].strftime('%Y-%m-%d')}_{tail}.pdf"
+    return send_file(buf, mimetype="application/pdf",
+                     as_attachment=True, download_name=filename)
+
+
+def _generate_workbook(views, to_date, from_date, view_key="all"):
+    """Generate xlsx. view_key='all' includes every sheet; otherwise just the selected one plus META."""
+    def _include(key):
+        return view_key == "all" or view_key == key
+
     hdr_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
     hdr_fill = PatternFill(start_color="1F3F2E", end_color="1F3F2E", fill_type="solid")
     hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -535,6 +618,7 @@ def _generate_workbook(views, to_date, from_date):
         ws.row_dimensions[1].height = 38
 
     wb = Workbook()
+    wb.remove(wb.active)  # drop default sheet — we create in order
     grand = views["grand"]
 
     additions_hdr = None
@@ -542,64 +626,62 @@ def _generate_workbook(views, to_date, from_date):
         additions_hdr = f"Additions ({from_date.strftime('%d %b')} to {to_date.strftime('%d %b')})"
 
     # === TEHSIL WISE ===
-    ws1 = wb.active
-    ws1.title = "TEHSIL WISE"
-    tehsil_headers = ["S.NO", "TEHSIL", "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
-                      "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
-    if additions_hdr:
-        tehsil_headers.append(additions_hdr)
-    write_hdr(ws1, tehsil_headers)
-
-    for i, row in enumerate(views["tehsil_rows"], start=1):
-        r = i + 1
-        vals = [i, row["tehsil"], row["villages"], row["total"],
-                row["daily_target"], row["submitted"], round(row["pct"], 2)]
-        aligns = [center, left, center, center, center, center, center]
+    if _include("tehsil"):
+        ws1 = wb.create_sheet("TEHSIL WISE")
+        tehsil_headers = ["S.NO", "TEHSIL", "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
+                          "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
         if additions_hdr:
-            vals.append(row["additions"] if row["additions"] is not None else "—")
-            aligns.append(center)
-        for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
-            c = ws1.cell(row=r, column=ci, value=v)
-            c.alignment = a; c.font = body_font; c.border = border
-            if ci in (3, 4, 5, 6): c.number_format = "#,##0"
-            if ci == 7: c.number_format = '0.00"%"'
-            if additions_hdr and ci == 8 and isinstance(v, int):
-                c.number_format = "+#,##0;-#,##0;0"
-
-    tt = len(views["tehsil_rows"]) + 2
-    ws1.cell(row=tt, column=2, value="TOTAL").alignment = left
-    ws1.cell(row=tt, column=3, value=grand["villages"]).alignment = center
-    ws1.cell(row=tt, column=4, value=grand["total_khasras"]).alignment = center
-    ws1.cell(row=tt, column=5, value=grand["daily_target"]).alignment = center
-    ws1.cell(row=tt, column=6, value=grand["submitted"]).alignment = center
-    ws1.cell(row=tt, column=7, value=round(grand["overall_pct"], 2)).alignment = center
-    if additions_hdr:
-        ws1.cell(row=tt, column=8, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
-
-    tot_cols = 8 if additions_hdr else 7
-    for c in range(1, tot_cols + 1):
-        cc = ws1.cell(row=tt, column=c)
-        cc.font = tot_font; cc.fill = tot_fill; cc.border = border
-        if c in (3, 4, 5, 6): cc.number_format = "#,##0"
-        if c == 7: cc.number_format = '0.00"%"'
-        if additions_hdr and c == 8 and isinstance(cc.value, int):
-            cc.number_format = "+#,##0;-#,##0;0"
-    widths = [7, 16, 16, 18, 14, 14, 14]
-    if additions_hdr: widths.append(22)
-    for i, w in enumerate(widths, start=1):
-        ws1.column_dimensions[get_column_letter(i)].width = w
-    ws1.freeze_panes = "A2"
+            tehsil_headers.append(additions_hdr)
+        write_hdr(ws1, tehsil_headers)
+        for i, row in enumerate(views["tehsil_rows"], start=1):
+            r = i + 1
+            vals = [i, row["tehsil"], row["villages"], row["total"],
+                    row["daily_target"], row["submitted"], round(row["pct"], 2)]
+            aligns = [center, left, center, center, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws1.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+                if ci in (3, 4, 5, 6): c.number_format = "#,##0"
+                if ci == 7: c.number_format = '0.00"%"'
+                if additions_hdr and ci == 8 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+        tt = len(views["tehsil_rows"]) + 2
+        ws1.cell(row=tt, column=2, value="TOTAL").alignment = left
+        ws1.cell(row=tt, column=3, value=grand["villages"]).alignment = center
+        ws1.cell(row=tt, column=4, value=grand["total_khasras"]).alignment = center
+        ws1.cell(row=tt, column=5, value=grand["daily_target"]).alignment = center
+        ws1.cell(row=tt, column=6, value=grand["submitted"]).alignment = center
+        ws1.cell(row=tt, column=7, value=round(grand["overall_pct"], 2)).alignment = center
+        if additions_hdr:
+            ws1.cell(row=tt, column=8, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+        tot_cols = 8 if additions_hdr else 7
+        for c in range(1, tot_cols + 1):
+            cc = ws1.cell(row=tt, column=c)
+            cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+            if c in (3, 4, 5, 6): cc.number_format = "#,##0"
+            if c == 7: cc.number_format = '0.00"%"'
+            if additions_hdr and c == 8 and isinstance(cc.value, int):
+                cc.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 16, 16, 18, 14, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws1.column_dimensions[get_column_letter(i)].width = w
+        ws1.freeze_panes = "A2"
 
     # === Patwari sheets ===
-    for title, rows in [("PATWARI BY %", views["patwari_by_pct"]),
-                        ("PATWARI BY COUNT", views["patwari_by_count"])]:
+    for title, rows, key in [("PATWARI BY %", views["patwari_by_pct"], "patwari-pct"),
+                              ("PATWARI BY COUNT", views["patwari_by_count"], "patwari-count")]:
+        if not _include(key):
+            continue
         ws = wb.create_sheet(title)
         p_headers = ["S.NO", "NAME OF PATWARI", "VILLAGES", "TOTAL SURVEY NOS",
                      "SUBMITTED", "% COMPLETION"]
         if additions_hdr:
             p_headers.append(additions_hdr)
         write_hdr(ws, p_headers)
-
         for i, row in enumerate(rows, start=1):
             r = i + 1
             vals = [i, row["patwari"], row["villages_list"], row["total"],
@@ -636,108 +718,8 @@ def _generate_workbook(views, to_date, from_date):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
 
-    # === VILLAGE WISE ===
-    ws_v = wb.create_sheet("VILLAGE WISE")
-    v_headers = ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "NAME OF PATWARI", "SUBMITTED"]
-    if additions_hdr:
-        v_headers.append(additions_hdr)
-    write_hdr(ws_v, v_headers)
-    for i, row in enumerate(views["village_rows"], start=1):
-        r = i + 1
-        vals = [i, row["tehsil"], row["village"], row["total"], row["patwari"], row["submitted"]]
-        aligns = [center, left, left, center, left, center]
-        if additions_hdr:
-            vals.append(row["additions"] if row["additions"] is not None else "—")
-            aligns.append(center)
-        for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
-            c = ws_v.cell(row=r, column=ci, value=v)
-            c.alignment = a; c.font = body_font; c.border = border
-            if ci in (4, 6): c.number_format = "#,##0"
-            if additions_hdr and ci == 7 and isinstance(v, int):
-                c.number_format = "+#,##0;-#,##0;0"
-    # TOTAL row
-    vt = len(views["village_rows"]) + 2
-    ws_v.cell(row=vt, column=2, value="TOTAL").alignment = left
-    ws_v.cell(row=vt, column=4, value=grand["total_khasras"]).alignment = center
-    ws_v.cell(row=vt, column=6, value=grand["submitted"]).alignment = center
-    if additions_hdr:
-        ws_v.cell(row=vt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
-    tot_col_max = 7 if additions_hdr else 6
-    for c in range(1, tot_col_max + 1):
-        cc = ws_v.cell(row=vt, column=c)
-        cc.font = tot_font; cc.fill = tot_fill; cc.border = border
-        if c in (4, 6): cc.number_format = "#,##0"
-        if additions_hdr and c == 7 and isinstance(cc.value, int):
-            cc.number_format = "+#,##0;-#,##0;0"
-    widths = [7, 14, 28, 20, 28, 16]
-    if additions_hdr: widths.append(22)
-    for i, w in enumerate(widths, start=1):
-        ws_v.column_dimensions[get_column_letter(i)].width = w
-    ws_v.freeze_panes = "A2"
-
-    # === NOT STARTED ===
-    ws3 = wb.create_sheet("NOT STARTED")
-    write_hdr(ws3, ["S.NO", "VILLAGE", "TEHSIL", "NAME OF PATWARI"], fill=ns_fill)
-    for i, row in enumerate(views["not_started"], start=1):
-        r = i + 1
-        vals = [i, row["village"], row["tehsil"], row["patwari"]]
-        aligns = [center, left, left, left]
-        for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
-            c = ws3.cell(row=r, column=ci, value=v)
-            c.alignment = a; c.font = body_font; c.border = border
-    for i, w in enumerate([7, 28, 18, 28], start=1):
-        ws3.column_dimensions[get_column_letter(i)].width = w
-    ws3.freeze_panes = "A2"
-
-    # === NAIB TEHSILDAR WISE (only if data exists) ===
-    def _write_group_sheet(title, rows, name_header, totals):
-        ws = wb.create_sheet(title)
-        headers = ["S.NO", name_header, "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
-                   "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
-        if additions_hdr:
-            headers.append(additions_hdr)
-        write_hdr(ws, headers)
-        for i, row in enumerate(rows, start=1):
-            r = i + 1
-            vals = [i, row["name"], row["villages"], row["total"],
-                    row["daily_target"], row["submitted"], round(row["pct"], 2)]
-            aligns = [center, left, center, center, center, center, center]
-            if additions_hdr:
-                vals.append(row["additions"] if row["additions"] is not None else "—")
-                aligns.append(center)
-            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
-                c = ws.cell(row=r, column=ci, value=v)
-                c.alignment = a; c.font = body_font; c.border = border
-                if ci in (3, 4, 5, 6): c.number_format = "#,##0"
-                if ci == 7: c.number_format = '0.00"%"'
-                if additions_hdr and ci == 8 and isinstance(v, int):
-                    c.number_format = "+#,##0;-#,##0;0"
-        # TOTAL row
-        if totals:
-            pt = len(rows) + 2
-            ws.cell(row=pt, column=2, value="TOTAL").alignment = left
-            ws.cell(row=pt, column=3, value=totals["villages"]).alignment = center
-            ws.cell(row=pt, column=4, value=totals["total"]).alignment = center
-            ws.cell(row=pt, column=5, value=totals["daily_target"]).alignment = center
-            ws.cell(row=pt, column=6, value=totals["submitted"]).alignment = center
-            ws.cell(row=pt, column=7, value=round(totals["pct"], 2)).alignment = center
-            if additions_hdr:
-                ws.cell(row=pt, column=8, value=totals["additions"] if totals["additions"] is not None else "—").alignment = center
-            tot_col_max = 8 if additions_hdr else 7
-            for c in range(1, tot_col_max + 1):
-                cc = ws.cell(row=pt, column=c)
-                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
-                if c in (3, 4, 5, 6): cc.number_format = "#,##0"
-                if c == 7: cc.number_format = '0.00"%"'
-                if additions_hdr and c == 8 and isinstance(cc.value, int):
-                    cc.number_format = "+#,##0;-#,##0;0"
-        widths = [7, 24, 18, 18, 14, 14, 14]
-        if additions_hdr: widths.append(22)
-        for i, w in enumerate(widths, start=1):
-            ws.column_dimensions[get_column_letter(i)].width = w
-        ws.freeze_panes = "A2"
-
-    if views.get("checker_rows"):
+    # === CHECKER WISE ===
+    if _include("checker") and views.get("checker_rows"):
         ws = wb.create_sheet("CHECKER WISE")
         headers = ["S.NO", "CHECKER", "SUB-DIVISION", "VILLAGES",
                    "TOTAL SURVEY NOS", "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
@@ -760,11 +742,6 @@ def _generate_workbook(views, to_date, from_date):
                 if ci == 8: c.number_format = '0.00"%"'
                 if additions_hdr and ci == 9 and isinstance(v, int):
                     c.number_format = "+#,##0;-#,##0;0"
-        widths = [7, 32, 14, 46, 16, 14, 14, 14]
-        if additions_hdr: widths.append(22)
-        for i, w in enumerate(widths, start=1):
-            ws.column_dimensions[get_column_letter(i)].width = w
-        # TOTAL row
         ct = views.get("checker_totals")
         if ct:
             pt = len(views["checker_rows"]) + 2
@@ -783,11 +760,115 @@ def _generate_workbook(views, to_date, from_date):
                 if c == 8: cc.number_format = '0.00"%"'
                 if additions_hdr and c == 9 and isinstance(cc.value, int):
                     cc.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 32, 14, 46, 16, 14, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
-    if views.get("subdiv_rows"):
-        _write_group_sheet("SUB-DIVISION WISE", views["subdiv_rows"], "SUB-DIVISION", views.get("subdiv_totals"))
 
-    # === META ===
+    # === SUB-DIVISION WISE ===
+    if _include("subdivision") and views.get("subdiv_rows"):
+        ws = wb.create_sheet("SUB-DIVISION WISE")
+        headers = ["S.NO", "SUB-DIVISION", "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
+                   "DAILY TARGET", "SUBMITTED", "% COMPLETION"]
+        if additions_hdr:
+            headers.append(additions_hdr)
+        write_hdr(ws, headers)
+        for i, row in enumerate(views["subdiv_rows"], start=1):
+            r = i + 1
+            vals = [i, row["name"], row["villages"], row["total"],
+                    row["daily_target"], row["submitted"], round(row["pct"], 2)]
+            aligns = [center, left, center, center, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+                if ci in (3, 4, 5, 6): c.number_format = "#,##0"
+                if ci == 7: c.number_format = '0.00"%"'
+                if additions_hdr and ci == 8 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+        st = views.get("subdiv_totals")
+        if st:
+            pt = len(views["subdiv_rows"]) + 2
+            ws.cell(row=pt, column=2, value="TOTAL").alignment = left
+            ws.cell(row=pt, column=3, value=st["villages"]).alignment = center
+            ws.cell(row=pt, column=4, value=st["total"]).alignment = center
+            ws.cell(row=pt, column=5, value=st["daily_target"]).alignment = center
+            ws.cell(row=pt, column=6, value=st["submitted"]).alignment = center
+            ws.cell(row=pt, column=7, value=round(st["pct"], 2)).alignment = center
+            if additions_hdr:
+                ws.cell(row=pt, column=8, value=st["additions"] if st["additions"] is not None else "—").alignment = center
+            tot_col_max = 8 if additions_hdr else 7
+            for c in range(1, tot_col_max + 1):
+                cc = ws.cell(row=pt, column=c)
+                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+                if c in (3, 4, 5, 6): cc.number_format = "#,##0"
+                if c == 7: cc.number_format = '0.00"%"'
+                if additions_hdr and c == 8 and isinstance(cc.value, int):
+                    cc.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 24, 18, 18, 14, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+    # === VILLAGE WISE ===
+    if _include("village"):
+        ws_v = wb.create_sheet("VILLAGE WISE")
+        v_headers = ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "NAME OF PATWARI", "SUBMITTED"]
+        if additions_hdr:
+            v_headers.append(additions_hdr)
+        write_hdr(ws_v, v_headers)
+        for i, row in enumerate(views["village_rows"], start=1):
+            r = i + 1
+            vals = [i, row["tehsil"], row["village"], row["total"], row["patwari"], row["submitted"]]
+            aligns = [center, left, left, center, left, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws_v.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+                if ci in (4, 6): c.number_format = "#,##0"
+                if additions_hdr and ci == 7 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+        vt = len(views["village_rows"]) + 2
+        ws_v.cell(row=vt, column=2, value="TOTAL").alignment = left
+        ws_v.cell(row=vt, column=4, value=grand["total_khasras"]).alignment = center
+        ws_v.cell(row=vt, column=6, value=grand["submitted"]).alignment = center
+        if additions_hdr:
+            ws_v.cell(row=vt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+        tot_col_max = 7 if additions_hdr else 6
+        for c in range(1, tot_col_max + 1):
+            cc = ws_v.cell(row=vt, column=c)
+            cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+            if c in (4, 6): cc.number_format = "#,##0"
+            if additions_hdr and c == 7 and isinstance(cc.value, int):
+                cc.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 14, 28, 20, 28, 16]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws_v.column_dimensions[get_column_letter(i)].width = w
+        ws_v.freeze_panes = "A2"
+
+    # === NOT STARTED ===
+    if _include("not-started"):
+        ws3 = wb.create_sheet("NOT STARTED")
+        write_hdr(ws3, ["S.NO", "VILLAGE", "TEHSIL", "NAME OF PATWARI"], fill=ns_fill)
+        for i, row in enumerate(views["not_started"], start=1):
+            r = i + 1
+            vals = [i, row["village"], row["tehsil"], row["patwari"]]
+            aligns = [center, left, left, left]
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws3.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+        for i, w in enumerate([7, 28, 18, 28], start=1):
+            ws3.column_dimensions[get_column_letter(i)].width = w
+        ws3.freeze_panes = "A2"
+
+    # === META (always) ===
     ws4 = wb.create_sheet("META")
     ws4.cell(row=1, column=1, value="Data as of").font = tot_font
     ws4.cell(row=1, column=2, value=to_date.strftime("%d %b %Y"))
@@ -796,10 +877,21 @@ def _generate_workbook(views, to_date, from_date):
     ws4.column_dimensions["A"].width = 18
     ws4.column_dimensions["B"].width = 20
 
+    # Safety: if no sheets got created (unlikely, but possible with bad view_key),
+    # add an info sheet so the workbook is valid.
+    if len(wb.sheetnames) == 1:  # only META
+        info = wb.create_sheet("INFO", 0)
+        info.cell(row=1, column=1, value=f"No data for view: {view_key}")
+
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return buf
+
+
+
+
+
 
 
 @app.route("/healthz")
