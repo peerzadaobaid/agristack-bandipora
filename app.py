@@ -180,11 +180,14 @@ def _pct(sub, tot):
     return (sub / tot * 100) if tot > 0 else 0.0
 
 
-def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
+def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET, tehsils_filter=None):
     """Build all dashboard views.
-    from_df: optional older snapshot for computing 'Additions'.
-    daily_target: district-level daily target for computing per-tehsil targets.
-    """
+    from_df: optional older snapshot for 'Additions'.
+    daily_target: district-level daily target.
+    tehsils_filter: None (no filter, no coloring), 'all' (all tehsils, coloring on),
+                    or set of tehsil names (filter + coloring)."""
+    apply_coloring = tehsils_filter is not None
+    active_tehsils = tehsils_filter if isinstance(tehsils_filter, set) else None
     has_additions = from_df is not None
     district_total = int(current_df["khasras"].sum())
 
@@ -220,14 +223,22 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
             "additions": additions,
         })
 
-    # --- Patwari-wise ---
-    p = (current_df.groupby("patwari", as_index=False)
+    # --- Patwari-wise (two sorts) — filtered by selected tehsils when picker is set ---
+    if active_tehsils is not None:
+        p_source = current_df[current_df["tehsil"].str.upper().isin(active_tehsils)]
+        p_old_source = from_df[from_df["tehsil"].str.upper().isin(active_tehsils)] if has_additions else None
+    else:
+        p_source = current_df
+        p_old_source = from_df if has_additions else None
+
+    p = (p_source.groupby("patwari", as_index=False)
                    .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
                         total=("khasras", "sum"),
                         submitted=("submitted", "sum")))
     p["pct"] = p.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
-    if has_additions:
-        p["additions"] = p["patwari"].map(lambda n: int(old_by_patwari.get(n, 0)))
+    if has_additions and p_old_source is not None:
+        old_by_p_filtered = p_old_source.groupby("patwari")["submitted"].sum().to_dict()
+        p["additions"] = p["patwari"].map(lambda n: int(old_by_p_filtered.get(n, 0)))
         p["additions"] = p["submitted"] - p["additions"]
     else:
         p["additions"] = None
@@ -245,9 +256,38 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
     patwari_by_pct = _records(p.sort_values(["pct", "submitted"], ascending=[False, False]))
     patwari_by_count = _records(p.sort_values(["submitted", "pct"], ascending=[False, False]))
 
-    # --- Village-wise (flat list, grouped by tehsil then village) ---
-    v_df = current_df[["village", "tehsil", "patwari", "khasras", "submitted"]].copy()
-    v_df = v_df.sort_values(["tehsil", "village"], kind="mergesort").reset_index(drop=True)
+    if apply_coloring:
+        apply_bands(patwari_by_pct, "pct")
+        apply_bands(patwari_by_count, "submitted")
+
+    # Totals used in the Patwari Wise TOTAL row — always sum from displayed rows,
+    # so they honestly reflect what's shown (filtered when picker set, district when not)
+    if patwari_by_pct:
+        p_tot = sum(r["total"] for r in patwari_by_pct)
+        p_sub = sum(r["submitted"] for r in patwari_by_pct)
+        patwari_totals = {
+            "total": p_tot,
+            "submitted": p_sub,
+            "pct": _pct(p_sub, p_tot),
+            "additions": sum(r["additions"] for r in patwari_by_pct) if has_additions else None,
+        }
+    else:
+        patwari_totals = None
+
+    # --- Village-wise ---
+    # Default (no picker): grouped by tehsil then village (alphabetical)
+    # When picker is set (either 'all' or a set of tehsils): sorted strictly by submitted desc,
+    # filtered to the selected tehsils when a set is given.
+    if apply_coloring:
+        if active_tehsils is not None:
+            v_df = current_df[current_df["tehsil"].str.upper().isin(active_tehsils)][
+                ["village", "tehsil", "patwari", "khasras", "submitted"]].copy()
+        else:
+            v_df = current_df[["village", "tehsil", "patwari", "khasras", "submitted"]].copy()
+        v_df = v_df.sort_values("submitted", ascending=False, kind="mergesort").reset_index(drop=True)
+    else:
+        v_df = current_df[["village", "tehsil", "patwari", "khasras", "submitted"]].copy()
+        v_df = v_df.sort_values(["tehsil", "village"], kind="mergesort").reset_index(drop=True)
     # Village-level additions: match on (tehsil, village) — some village names appear in multiple tehsils
     old_by_village = {}
     if has_additions:
@@ -266,6 +306,21 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
             "submitted": int(r["submitted"]),
             "additions": additions,
         })
+    if apply_coloring:
+        apply_bands(village_rows, "submitted")
+
+    # Village Wise TOTAL row — sum from displayed rows for honest filtered totals
+    if village_rows:
+        v_tot = sum(r["total"] for r in village_rows)
+        v_sub = sum(r["submitted"] for r in village_rows)
+        village_totals = {
+            "total": v_tot,
+            "submitted": v_sub,
+            "pct": _pct(v_sub, v_tot),
+            "additions": sum(r["additions"] for r in village_rows) if has_additions else None,
+        }
+    else:
+        village_totals = None
 
     # --- Not started ---
     ns = current_df[current_df["submitted"] == 0].sort_values(["tehsil", "village"])
@@ -332,6 +387,50 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
     top_patwari = patwari_by_count[0] if patwari_by_count else None
     top_tehsil = tehsil_rows[0] if tehsil_rows else None
 
+    # --- Sumbal Patwaris — patwari-wise filtered to SUMBAL tehsil, sorted by submitted desc ---
+    sumbal_patwari_rows = None
+    sumbal_patwari_totals = None
+    sumbal_df = current_df[current_df["tehsil"].str.upper() == "SUMBAL"]
+    if len(sumbal_df):
+        sp = (sumbal_df.groupby("patwari", as_index=False)
+                       .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
+                            villages=("village", "count"),
+                            total=("khasras", "sum"),
+                            submitted=("submitted", "sum")))
+        sp["pct"] = sp.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
+        # Additions — compute against SUMBAL rows in old snapshot only (avoids cross-tehsil name collision)
+        old_by_patwari_sumbal = {}
+        if has_additions:
+            old_sumbal = from_df[from_df["tehsil"].str.upper() == "SUMBAL"]
+            old_by_patwari_sumbal = old_sumbal.groupby("patwari")["submitted"].sum().to_dict()
+        sp = sp.sort_values(["submitted", "pct"], ascending=[False, False])
+        sumbal_patwari_rows = []
+        for _, r in sp.iterrows():
+            additions = None
+            if has_additions:
+                additions = int(r["submitted"]) - int(old_by_patwari_sumbal.get(r["patwari"], 0))
+            sumbal_patwari_rows.append({
+                "patwari": r["patwari"],
+                "villages_list": r["villages_list"],
+                "villages": int(r["villages"]),
+                "total": int(r["total"]),
+                "submitted": int(r["submitted"]),
+                "pct": float(r["pct"]),
+                "additions": additions,
+            })
+        # Totals for the Sumbal-only footer
+        subs = sum(r["submitted"] for r in sumbal_patwari_rows)
+        tot = sum(r["total"] for r in sumbal_patwari_rows)
+        sumbal_patwari_totals = {
+            "villages": sum(r["villages"] for r in sumbal_patwari_rows),
+            "total": tot,
+            "submitted": subs,
+            "pct": _pct(subs, tot),
+            "additions": sum(r["additions"] for r in sumbal_patwari_rows) if has_additions else None,
+        }
+        # Sumbal Patwaris is always color-banded (by Submitted, high→low)
+        apply_bands(sumbal_patwari_rows, "submitted")
+
     # Totals for the Checker Wise and Sub-Division Wise footer rows.
     # Computed from the rows in the view (not district-wide) so they honestly
     # reflect coverage — if some villages have blank checker/subdivision they're
@@ -371,11 +470,15 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET):
         "tehsil_rows": tehsil_rows,
         "patwari_by_pct": patwari_by_pct,
         "patwari_by_count": patwari_by_count,
+        "patwari_totals": patwari_totals,
         "checker_rows": checker_rows,
         "checker_totals": checker_totals,
         "subdiv_rows": subdiv_rows,
         "subdiv_totals": subdiv_totals,
         "village_rows": village_rows,
+        "village_totals": village_totals,
+        "sumbal_patwari_rows": sumbal_patwari_rows,
+        "sumbal_patwari_totals": sumbal_patwari_totals,
         "not_started": not_started,
         "top_patwari": top_patwari,
         "top_tehsil": top_tehsil,
@@ -408,6 +511,39 @@ def parse_date_param(s):
         return datetime.strptime(s, "%Y-%m-%d").date()
     except Exception:
         return None
+
+
+def parse_tehsils_param(request_args):
+    """Read tehsils checkbox selection from query args.
+    Returns None (no filter, no coloring), 'all' (all tehsils, coloring on),
+    or a set of tehsil names (filter + coloring)."""
+    values = request_args.getlist("tehsils")
+    if not values:
+        return None
+    cleaned = [v.strip() for v in values if v and v.strip()]
+    if not cleaned:
+        return None
+    if any(v.lower() == "all" for v in cleaned):
+        return "all"
+    return set(v.upper() for v in cleaned)
+
+
+def apply_bands(rows, sort_key):
+    """Attach a 'band' key ('green'|'yellow'|'red') to each row.
+    Assumes rows are already sorted high-to-low by sort_key.
+    Top 30% green, bottom 30% red, middle 40% yellow (by row count)."""
+    n = len(rows)
+    if n == 0:
+        return
+    top_n = round(n * 0.3)
+    bot_n = round(n * 0.3)
+    for i, r in enumerate(rows):
+        if i < top_n:
+            r["band"] = "green"
+        elif i >= n - bot_n:
+            r["band"] = "red"
+        else:
+            r["band"] = "yellow"
 
 
 def resolve_dates(snapshots, from_param, to_param):
@@ -450,18 +586,24 @@ def index():
         if from_path:
             from_df = load_snapshot(from_path)
 
+    tehsils_filter = parse_tehsils_param(request.args)
+
     daily_target = read_daily_target()
-    views = build_views(current_df, from_df, daily_target)
+    views = build_views(current_df, from_df, daily_target, tehsils_filter)
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
 
-    # For the dropdowns
     date_options = [(d.isoformat(), format_date(d)) for d, _ in snapshots]
 
     additions_label = None
     if views["has_additions"]:
         additions_label = f"Additions ({format_date_short(from_date)} → {format_date_short(to_date)})"
+
+    # Picker state for the template
+    all_tehsils = sorted(current_df["tehsil"].dropna().unique().tolist())
+    is_all_selected = tehsils_filter == "all"
+    selected_tehsils = tehsils_filter if isinstance(tehsils_filter, set) else set()
 
     return render_template(
         "index.html",
@@ -471,6 +613,10 @@ def index():
         to_date_iso=to_date.isoformat(),
         additions_label=additions_label,
         snapshot_count=len(snapshots),
+        all_tehsils=all_tehsils,
+        is_all_selected=is_all_selected,
+        selected_tehsils=selected_tehsils,
+        coloring_active=(tehsils_filter is not None),
         **views,
     )
 
@@ -496,35 +642,39 @@ def _resolve_download_context():
     to_path = snapshot_for_date(snapshots, to_date)
     current_df = load_snapshot(to_path)
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
+    tehsils_filter = parse_tehsils_param(request.args)
     daily_target = read_daily_target()
-    views = build_views(current_df, from_df, daily_target)
+    views = build_views(current_df, from_df, daily_target, tehsils_filter)
     return {
         "views": views,
         "to_date": to_date,
         "from_date": from_date,
         "gap_days": (to_date - from_date).days if from_date else 0,
+        "tehsils_filter": tehsils_filter,
     }
 
 
 def _panels_for_view(views, view_key):
-    """Return a list of {title, type, rows} for the given view_key.
-    'all' returns every populated panel in dashboard order."""
+    """Return a list of {title, type, rows, totals} for the given view_key.
+    'all' returns every populated panel in dashboard order.
+    totals is None for panels that use district-wide grand totals."""
     all_panels = [
-        ("Tehsil Wise", "tehsil", views.get("tehsil_rows"), "tehsil"),
-        ("Patwari Wise — By % Completion", "patwari", views.get("patwari_by_pct"), "patwari-pct"),
-        ("Patwari Wise — By Total Submissions", "patwari", views.get("patwari_by_count"), "patwari-count"),
-        ("Checker Wise", "checker", views.get("checker_rows"), "checker"),
-        ("Sub-Division Wise", "subdivision", views.get("subdiv_rows"), "subdivision"),
-        ("Village Wise", "village", views.get("village_rows"), "village"),
-        ("Not Started Villages", "not-started", views.get("not_started"), "not-started"),
+        ("Tehsil Wise", "tehsil", views.get("tehsil_rows"), None, "tehsil"),
+        ("Patwari Wise — By % Completion", "patwari", views.get("patwari_by_pct"), None, "patwari-pct"),
+        ("Patwari Wise — By Total Submissions", "patwari", views.get("patwari_by_count"), None, "patwari-count"),
+        ("Checker Wise", "checker", views.get("checker_rows"), views.get("checker_totals"), "checker"),
+        ("Sub-Division Wise", "subdivision", views.get("subdiv_rows"), views.get("subdiv_totals"), "subdivision"),
+        ("Village Wise", "village", views.get("village_rows"), None, "village"),
+        ("Not Started Villages", "not-started", views.get("not_started"), None, "not-started"),
+        ("Sumbal Patwaris", "patwari", views.get("sumbal_patwari_rows"), views.get("sumbal_patwari_totals"), "sumbal-patwaris"),
     ]
     out = []
-    for title, ptype, rows, key in all_panels:
+    for title, ptype, rows, totals, key in all_panels:
         if rows is None:
             continue
         if view_key != "all" and key != view_key:
             continue
-        out.append({"title": title, "type": ptype, "rows": rows, "key": key})
+        out.append({"title": title, "type": ptype, "rows": rows, "totals": totals, "key": key})
     return out
 
 
@@ -571,6 +721,11 @@ def download_pdf():
     if ctx["gap_days"] > 0:
         additions_label = f"Additions ({ctx['from_date'].strftime('%d %b')} → {ctx['to_date'].strftime('%d %b')})"
 
+    # Pick orientation based on what fits the content best.
+    # Wide tables (many columns / villages list) need landscape; narrow ones look better in portrait.
+    LANDSCAPE_VIEWS = {"tehsil", "patwari-pct", "patwari-count", "checker", "village", "sumbal-patwaris", "all"}
+    orientation = "landscape" if view_key in LANDSCAPE_VIEWS else "portrait"
+
     html = render_template(
         "print.html",
         panels=panels,
@@ -582,6 +737,7 @@ def download_pdf():
         grand=ctx["views"]["grand"],
         checker_totals=ctx["views"].get("checker_totals"),
         subdiv_totals=ctx["views"].get("subdiv_totals"),
+        orientation=orientation,
     )
     buf = io.BytesIO()
     result = pisa.CreatePDF(html, dest=buf)
@@ -610,6 +766,20 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
     ns_fill = PatternFill(start_color="A54B2A", end_color="A54B2A", fill_type="solid")
     thin = Side(border_style="thin", color="999999")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Band fills for filtered/coloring views — top 30% green, mid 40% yellow, bot 30% red
+    band_fills = {
+        "green":  PatternFill(start_color="DDF0D8", end_color="DDF0D8", fill_type="solid"),
+        "yellow": PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid"),
+        "red":    PatternFill(start_color="F8D7DA", end_color="F8D7DA", fill_type="solid"),
+    }
+
+    def apply_band_fill(ws, row_num, num_cols, band):
+        """Apply band fill to all cells in a row (call after normal styling)."""
+        if not band or band not in band_fills:
+            return
+        for ci in range(1, num_cols + 1):
+            ws.cell(row=row_num, column=ci).fill = band_fills[band]
 
     def write_hdr(ws, headers, fill=hdr_fill):
         for i, h in enumerate(headers, start=1):
@@ -697,13 +867,26 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
                 if ci == 6: c.number_format = '0.00"%"'
                 if additions_hdr and ci == 7 and isinstance(v, int):
                     c.number_format = "+#,##0;-#,##0;0"
+            # Apply band color (only when picker is set; row.get('band') is None otherwise)
+            apply_band_fill(ws, r, 7 if additions_hdr else 6, row.get("band"))
+        # TOTAL row — use filtered totals when picker active, district otherwise
         pt = len(rows) + 2
-        ws.cell(row=pt, column=2, value="TOTAL").alignment = left
-        ws.cell(row=pt, column=4, value=grand["total_khasras"]).alignment = center
-        ws.cell(row=pt, column=5, value=grand["submitted"]).alignment = center
-        ws.cell(row=pt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
-        if additions_hdr:
-            ws.cell(row=pt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+        pt_totals = views.get("patwari_totals") if views.get("patwari_totals") else None
+        use_filtered = pt_totals is not None and any(r.get("band") for r in rows)
+        tot_label = "TOTAL (Filtered)" if use_filtered else "TOTAL"
+        ws.cell(row=pt, column=2, value=tot_label).alignment = left
+        if use_filtered:
+            ws.cell(row=pt, column=4, value=pt_totals["total"]).alignment = center
+            ws.cell(row=pt, column=5, value=pt_totals["submitted"]).alignment = center
+            ws.cell(row=pt, column=6, value=round(pt_totals["pct"], 2)).alignment = center
+            if additions_hdr:
+                ws.cell(row=pt, column=7, value=pt_totals["additions"] if pt_totals["additions"] is not None else "—").alignment = center
+        else:
+            ws.cell(row=pt, column=4, value=grand["total_khasras"]).alignment = center
+            ws.cell(row=pt, column=5, value=grand["submitted"]).alignment = center
+            ws.cell(row=pt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
+            if additions_hdr:
+                ws.cell(row=pt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
         tot_cols = 7 if additions_hdr else 6
         for c in range(1, tot_cols + 1):
             cc = ws.cell(row=pt, column=c)
@@ -834,12 +1017,22 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
                 if ci in (4, 6): c.number_format = "#,##0"
                 if additions_hdr and ci == 7 and isinstance(v, int):
                     c.number_format = "+#,##0;-#,##0;0"
+            apply_band_fill(ws_v, r, 7 if additions_hdr else 6, row.get("band"))
         vt = len(views["village_rows"]) + 2
-        ws_v.cell(row=vt, column=2, value="TOTAL").alignment = left
-        ws_v.cell(row=vt, column=4, value=grand["total_khasras"]).alignment = center
-        ws_v.cell(row=vt, column=6, value=grand["submitted"]).alignment = center
-        if additions_hdr:
-            ws_v.cell(row=vt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+        v_totals = views.get("village_totals")
+        v_use_filtered = v_totals is not None and any(r.get("band") for r in views["village_rows"])
+        v_label = "TOTAL (Filtered)" if v_use_filtered else "TOTAL"
+        ws_v.cell(row=vt, column=2, value=v_label).alignment = left
+        if v_use_filtered:
+            ws_v.cell(row=vt, column=4, value=v_totals["total"]).alignment = center
+            ws_v.cell(row=vt, column=6, value=v_totals["submitted"]).alignment = center
+            if additions_hdr:
+                ws_v.cell(row=vt, column=7, value=v_totals["additions"] if v_totals["additions"] is not None else "—").alignment = center
+        else:
+            ws_v.cell(row=vt, column=4, value=grand["total_khasras"]).alignment = center
+            ws_v.cell(row=vt, column=6, value=grand["submitted"]).alignment = center
+            if additions_hdr:
+                ws_v.cell(row=vt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
         tot_col_max = 7 if additions_hdr else 6
         for c in range(1, tot_col_max + 1):
             cc = ws_v.cell(row=vt, column=c)
@@ -867,6 +1060,54 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
         for i, w in enumerate([7, 28, 18, 28], start=1):
             ws3.column_dimensions[get_column_letter(i)].width = w
         ws3.freeze_panes = "A2"
+
+    # === SUMBAL PATWARIS ===
+    if _include("sumbal-patwaris") and views.get("sumbal_patwari_rows"):
+        ws = wb.create_sheet("SUMBAL PATWARIS")
+        headers = ["S.NO", "NAME OF PATWARI", "VILLAGES", "TOTAL SURVEY NOS",
+                   "SUBMITTED", "% COMPLETION"]
+        if additions_hdr:
+            headers.append(additions_hdr)
+        write_hdr(ws, headers)
+        for i, row in enumerate(views["sumbal_patwari_rows"], start=1):
+            r = i + 1
+            vals = [i, row["patwari"], row["villages_list"], row["total"],
+                    row["submitted"], round(row["pct"], 2)]
+            aligns = [center, left, left, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                c = ws.cell(row=r, column=ci, value=v)
+                c.alignment = a; c.font = body_font; c.border = border
+                if ci in (4, 5): c.number_format = "#,##0"
+                if ci == 6: c.number_format = '0.00"%"'
+                if additions_hdr and ci == 7 and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+            # Sumbal Patwaris is always color-banded
+            apply_band_fill(ws, r, 7 if additions_hdr else 6, row.get("band"))
+        st = views.get("sumbal_patwari_totals")
+        if st:
+            pt = len(views["sumbal_patwari_rows"]) + 2
+            ws.cell(row=pt, column=2, value="TOTAL").alignment = left
+            ws.cell(row=pt, column=4, value=st["total"]).alignment = center
+            ws.cell(row=pt, column=5, value=st["submitted"]).alignment = center
+            ws.cell(row=pt, column=6, value=round(st["pct"], 2)).alignment = center
+            if additions_hdr:
+                ws.cell(row=pt, column=7, value=st["additions"] if st["additions"] is not None else "—").alignment = center
+            tot_col_max = 7 if additions_hdr else 6
+            for c in range(1, tot_col_max + 1):
+                cc = ws.cell(row=pt, column=c)
+                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+                if c in (4, 5): cc.number_format = "#,##0"
+                if c == 6: cc.number_format = '0.00"%"'
+                if additions_hdr and c == 7 and isinstance(cc.value, int):
+                    cc.number_format = "+#,##0;-#,##0;0"
+        widths = [7, 26, 50, 18, 14, 14]
+        if additions_hdr: widths.append(22)
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
 
     # === META (always) ===
     ws4 = wb.create_sheet("META")

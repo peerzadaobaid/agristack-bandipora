@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <style>
-  @page { size: A4 landscape; margin: 1.2cm 1cm 1.2cm 1cm; }
+  @page { size: A4 {{ orientation|default('landscape') }}; margin: 1.2cm 1cm 1.2cm 1cm; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #222; }
   h1 { font-size: 15pt; color: #1F3F2E; margin: 0 0 4pt 0; font-weight: normal; }
   .subhead { font-size: 9pt; color: #4A6B4E; letter-spacing: 1pt; text-transform: uppercase; margin-bottom: 6pt; }
@@ -20,8 +20,10 @@
   .neg { color: #A54B2A; font-weight: bold; }
   .zero, .na { color: #999; }
   .pagebreak { page-break-before: always; }
-  .credit { text-align: center; margin-top: 14pt; padding-top: 6pt; border-top: 0.5pt solid #ccc; font-size: 7pt; color: #7A7568; }
-  .credit .name { color: #1F3F2E; font-size: 8pt; }
+  /* Band-colored rows for filtered/coloring views */
+  tr.band-green td   { background-color: #DDF0D8; }
+  tr.band-yellow td  { background-color: #FFF3CD; }
+  tr.band-red td     { background-color: #F8D7DA; }
 </style>
 </head>
 <body>
@@ -84,7 +86,7 @@
     </tr></thead>
     <tbody>
     {% for row in panel.rows %}
-      <tr><td class="center">{{ loop.index }}</td><td>{{ row.patwari }}</td>
+      <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}><td class="center">{{ loop.index }}</td><td>{{ row.patwari }}</td>
       <td class="villages">{{ row.villages_list }}</td>
       <td class="num">{{ "{:,}".format(row.total) }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
@@ -94,10 +96,17 @@
     {% endfor %}
     </tbody>
     <tfoot><tr><td></td><td>TOTAL</td><td></td>
-      <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
-      <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-      <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
-      {% if has_additions %}<td class="add">{{ fmt_add(grand.additions) }}</td>{% endif %}
+      {% if panel.totals %}
+        <td class="num">{{ "{:,}".format(panel.totals.total) }}</td>
+        <td class="num">{{ "{:,}".format(panel.totals.submitted) }}</td>
+        <td class="pct">{{ "%.2f"|format(panel.totals.pct) }}%</td>
+        {% if has_additions %}<td class="add">{{ fmt_add(panel.totals.additions) }}</td>{% endif %}
+      {% else %}
+        <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+        <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+        <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+        {% if has_additions %}<td class="add">{{ fmt_add(grand.additions) }}</td>{% endif %}
+      {% endif %}
     </tr></tfoot>
   </table>
 
@@ -174,7 +183,7 @@
     </tr></thead>
     <tbody>
     {% for row in panel.rows %}
-      <tr><td class="center">{{ loop.index }}</td><td>{{ row.tehsil }}</td><td>{{ row.village }}</td>
+      <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}><td class="center">{{ loop.index }}</td><td>{{ row.tehsil }}</td><td>{{ row.village }}</td>
       <td class="num">{{ "{:,}".format(row.total) }}</td>
       <td>{{ row.patwari }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
@@ -203,11 +212,6 @@
   {% endif %}
 
 {% endfor %}
-
-<div class="credit">
-  <div class="name">a</div>
-  l &middot; District Bandipora AgriStack Progress
-</div>
 
 </body>
 </html>

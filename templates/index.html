@@ -294,6 +294,44 @@
   }
   tbody tr:nth-child(even) td { background: var(--stripe); }
   tbody tr:hover td { background: var(--tint-good); }
+
+  /* Band-colored rows (top 30% / mid 40% / bot 30%) — override stripes */
+  tbody tr.band-green td   { background-color: #DDF0D8 !important; }
+  tbody tr.band-yellow td  { background-color: #FFF3CD !important; }
+  tbody tr.band-red td     { background-color: #F8D7DA !important; }
+
+  .tehsil-picker {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 12px 18px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px 18px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .tehsil-picker .lbl {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-2);
+    font-weight: 500;
+  }
+  .tehsil-picker label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    color: var(--ink);
+    user-select: none;
+  }
+  .tehsil-picker input[type="checkbox"] { accent-color: var(--ink); cursor: pointer; }
+  .tehsil-picker .hint {
+    font-size: 11px;
+    color: var(--mute);
+    margin-left: auto;
+  }
   td.num { text-align: right; font-family: Georgia, serif; font-size: 15px; }
   td.center { text-align: center; }
   td.villages { color: var(--mute); font-size: 13px; }
@@ -426,8 +464,33 @@
       <option value="{{ iso }}" {% if iso == to_date_iso %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
+    {# Preserve the tehsils picker state when the date range changes #}
+    {% if is_all_selected %}<input type="hidden" name="tehsils" value="all">{% endif %}
+    {% for t in selected_tehsils %}<input type="hidden" name="tehsils" value="{{ t }}">{% endfor %}
   </form>
   {% endif %}
+
+  <form class="tehsil-picker" id="tehsil-form" method="get">
+    <span class="lbl">Tehsils</span>
+    <label>
+      <input type="checkbox" name="tehsils" value="all" id="tehsil-all" {% if is_all_selected %}checked{% endif %}>
+      All
+    </label>
+    {% for t in all_tehsils %}
+    <label>
+      <input type="checkbox" name="tehsils" value="{{ t }}" class="tehsil-one" {% if t in selected_tehsils %}checked{% endif %}>
+      {{ t }}
+    </label>
+    {% endfor %}
+    {# Preserve date-range state when picker changes #}
+    {% if from_date_iso %}<input type="hidden" name="from" value="{{ from_date_iso }}">{% endif %}
+    {% if to_date_iso %}<input type="hidden" name="to" value="{{ to_date_iso }}">{% endif %}
+    {% if coloring_active %}
+    <span class="hint">Filter applied → Patwari, Village views colored (green top 30% · yellow middle · red bottom 30%)</span>
+    {% else %}
+    <span class="hint">Pick tehsils to filter and color Patwari &amp; Village views</span>
+    {% endif %}
+  </form>
 
   <div class="tabs" role="tablist">
     <button class="tab active" data-target="tehsil">Tehsil Wise</button>
@@ -436,6 +499,7 @@
     {% if subdiv_rows %}<button class="tab" data-target="subdivision">Sub-Division Wise</button>{% endif %}
     <button class="tab" data-target="village">Village Wise</button>
     <button class="tab" data-target="not-started">Not Started</button>
+    {% if sumbal_patwari_rows %}<button class="tab" data-target="sumbal-patwaris">Sumbal Patwaris</button>{% endif %}
   </div>
 
   {% macro additions_cell(val) %}
@@ -517,7 +581,7 @@
         </thead>
         <tbody>
           {% for row in rows %}
-          <tr>
+          <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}>
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.patwari }}</td>
             <td class="villages">{{ row.villages_list }}</td>
@@ -531,12 +595,19 @@
         <tfoot>
           <tr>
             <td></td>
-            <td>TOTAL</td>
+            <td>TOTAL{% if coloring_active %} (Filtered){% endif %}</td>
             <td></td>
-            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
-            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-            <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
-            {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+            {% if coloring_active and patwari_totals %}
+              <td class="num">{{ "{:,}".format(patwari_totals.total) }}</td>
+              <td class="num">{{ "{:,}".format(patwari_totals.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(patwari_totals.pct) }}%</td>
+              {% if has_additions %}{{ additions_cell(patwari_totals.additions) }}{% endif %}
+            {% else %}
+              <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+              <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+              {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+            {% endif %}
           </tr>
         </tfoot>
       </table>
@@ -668,7 +739,7 @@
         </thead>
         <tbody>
           {% for row in village_rows %}
-          <tr>
+          <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}>
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.tehsil }}</td>
             <td>{{ row.village }}</td>
@@ -683,11 +754,18 @@
           <tr>
             <td></td>
             <td></td>
-            <td>TOTAL</td>
-            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
-            <td></td>
-            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-            {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+            <td>TOTAL{% if coloring_active %} (Filtered){% endif %}</td>
+            {% if coloring_active and village_totals %}
+              <td class="num">{{ "{:,}".format(village_totals.total) }}</td>
+              <td></td>
+              <td class="num">{{ "{:,}".format(village_totals.submitted) }}</td>
+              {% if has_additions %}{{ additions_cell(village_totals.additions) }}{% endif %}
+            {% else %}
+              <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+              <td></td>
+              <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+              {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+            {% endif %}
           </tr>
         </tfoot>
       </table>
@@ -722,6 +800,52 @@
     </div>
   </section>
 
+  {% if sumbal_patwari_rows %}
+  <section id="sumbal-patwaris" class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:55px">S.NO</th>
+            <th style="width:200px">Name of Patwari</th>
+            <th>Villages</th>
+            <th style="width:150px">Total Survey Nos</th>
+            <th style="width:110px">Submitted</th>
+            <th style="width:120px">% Completion</th>
+            {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sumbal_patwari_rows %}
+          <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}>
+            <td class="center">{{ loop.index }}</td>
+            <td>{{ row.patwari }}</td>
+            <td class="villages">{{ row.villages_list }}</td>
+            <td class="num">{{ "{:,}".format(row.total) }}</td>
+            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+            <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+            {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% if sumbal_patwari_totals %}
+        <tfoot>
+          <tr>
+            <td></td>
+            <td>TOTAL (Sumbal)</td>
+            <td></td>
+            <td class="num">{{ "{:,}".format(sumbal_patwari_totals.total) }}</td>
+            <td class="num">{{ "{:,}".format(sumbal_patwari_totals.submitted) }}</td>
+            <td class="pct">{{ "%.2f"|format(sumbal_patwari_totals.pct) }}%</td>
+            {% if has_additions %}{{ additions_cell(sumbal_patwari_totals.additions) }}{% endif %}
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   <div class="download-bar">
     <span class="lbl">Download</span>
     <select id="dl-view">
@@ -733,6 +857,7 @@
       {% if subdiv_rows %}<option value="subdivision">Sub-Division Wise</option>{% endif %}
       <option value="village">Village Wise</option>
       <option value="not-started">Not Started</option>
+      {% if sumbal_patwari_rows %}<option value="sumbal-patwaris">Sumbal Patwaris</option>{% endif %}
     </select>
     <span class="spacer"></span>
     <button type="button" class="dl-btn" id="dl-excel-btn">Download Excel</button>
@@ -774,6 +899,25 @@
   const rangeForm = document.getElementById('range-form');
   if (rangeForm) {
     rangeForm.addEventListener('change', () => rangeForm.submit());
+  }
+
+  // Tehsil picker: auto-submit on change, with "All" mutually exclusive with individual tehsils
+  const tehsilForm = document.getElementById('tehsil-form');
+  if (tehsilForm) {
+    const allBox = document.getElementById('tehsil-all');
+    const oneBoxes = tehsilForm.querySelectorAll('.tehsil-one');
+    if (allBox) {
+      allBox.addEventListener('change', () => {
+        if (allBox.checked) oneBoxes.forEach(b => b.checked = false);
+        tehsilForm.submit();
+      });
+    }
+    oneBoxes.forEach(b => {
+      b.addEventListener('change', () => {
+        if (b.checked && allBox) allBox.checked = false;
+        tehsilForm.submit();
+      });
+    });
   }
 
   // Downloads — Excel and PDF, both password-gated, both respect the view + date-range dropdowns
