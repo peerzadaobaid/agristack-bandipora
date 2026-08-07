@@ -265,6 +265,18 @@
   .subpanel { display: none; }
   .subpanel.active { display: block; }
 
+  .metric-note {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ink);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .metric-note strong { color: var(--ink); font-weight: 600; }
+
   .table-wrap {
     background: var(--paper);
     border: 1px solid var(--rule);
@@ -624,7 +636,12 @@
     </div>
     {% endmacro %}
 
-    <div id="by-pct" class="subpanel active">{{ patwari_table(patwari_by_pct, show_effort=True) }}</div>
+    <div id="by-pct" class="subpanel active">
+      <div class="metric-note">
+        <strong>Relative Effort</strong> = each patwari's submissions ÷ the district's top submission count. It shows raw effort side-by-side with % Completion.
+      </div>
+      {{ patwari_table(patwari_by_pct, show_effort=True) }}
+    </div>
     <div id="by-count" class="subpanel">{{ patwari_table(patwari_by_count) }}</div>
   </section>
 

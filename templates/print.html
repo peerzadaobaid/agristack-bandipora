@@ -20,6 +20,16 @@
   .neg { color: #A54B2A; font-weight: bold; }
   .zero, .na { color: #999; }
   .pagebreak { page-break-before: always; }
+  .metric-note {
+    background-color: #FDFBF5;
+    border-left: 2pt solid #1F3F2E;
+    padding: 5pt 7pt;
+    margin-bottom: 8pt;
+    font-size: 8pt;
+    color: #2A2E28;
+    line-height: 1.4;
+  }
+  .metric-note strong { color: #1F3F2E; }
   /* Band-colored rows for filtered/coloring views */
   tr.band-green td   { background-color: #DDF0D8; }
   tr.band-yellow td  { background-color: #FFF3CD; }
@@ -78,6 +88,11 @@
 
   {% elif panel.type == 'patwari' %}
   {% set show_effort = (panel.key == 'patwari-pct') %}
+  {% if show_effort %}
+  <div class="metric-note">
+    <strong>Relative Effort</strong> = each patwari's submissions ÷ the district's top submission count. It shows raw effort side-by-side with % Completion.
+  </div>
+  {% endif %}
   <table>
     <thead><tr>
       <th style="width:5%">S.NO</th><th style="width:18%">Name of Patwari</th><th>Villages</th>
