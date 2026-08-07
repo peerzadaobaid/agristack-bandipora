@@ -77,11 +77,13 @@
   </table>
 
   {% elif panel.type == 'patwari' %}
+  {% set show_effort = (panel.key == 'patwari-pct') %}
   <table>
     <thead><tr>
       <th style="width:5%">S.NO</th><th style="width:18%">Name of Patwari</th><th>Villages</th>
       <th style="width:11%">Total Survey Nos</th><th style="width:9%">Submitted</th>
       <th style="width:10%">% Completion</th>
+      {% if show_effort %}<th style="width:10%">Relative Effort</th>{% endif %}
       {% if has_additions %}<th style="width:12%">{{ additions_label }}</th>{% endif %}
     </tr></thead>
     <tbody>
@@ -91,6 +93,13 @@
       <td class="num">{{ "{:,}".format(row.total) }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
       <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+      {% if show_effort %}
+        {% if row.relative_effort is none %}
+          <td class="pct">—</td>
+        {% else %}
+          <td class="pct">{{ "%.2f"|format(row.relative_effort) }}%</td>
+        {% endif %}
+      {% endif %}
       {% if has_additions %}<td class="add">{{ fmt_add(row.additions) }}</td>{% endif %}
       </tr>
     {% endfor %}
@@ -100,11 +109,13 @@
         <td class="num">{{ "{:,}".format(panel.totals.total) }}</td>
         <td class="num">{{ "{:,}".format(panel.totals.submitted) }}</td>
         <td class="pct">{{ "%.2f"|format(panel.totals.pct) }}%</td>
+        {% if show_effort %}<td></td>{% endif %}
         {% if has_additions %}<td class="add">{{ fmt_add(panel.totals.additions) }}</td>{% endif %}
       {% else %}
         <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
         <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
         <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+        {% if show_effort %}<td></td>{% endif %}
         {% if has_additions %}<td class="add">{{ fmt_add(grand.additions) }}</td>{% endif %}
       {% endif %}
     </tr></tfoot>

@@ -565,7 +565,7 @@
       <button class="subtab" data-sub="by-count">By Total Submissions</button>
     </div>
 
-    {% macro patwari_table(rows) %}
+    {% macro patwari_table(rows, show_effort=False) %}
     <div class="table-wrap">
       <table>
         <thead>
@@ -576,6 +576,7 @@
             <th style="width:130px">Total Survey Nos</th>
             <th style="width:110px">Submitted</th>
             <th style="width:110px">% Completion</th>
+            {% if show_effort %}<th style="width:120px">Relative Effort</th>{% endif %}
             {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
           </tr>
         </thead>
@@ -588,6 +589,13 @@
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+            {% if show_effort %}
+              {% if row.relative_effort is none %}
+                <td class="pct">—</td>
+              {% else %}
+                <td class="pct">{{ "%.2f"|format(row.relative_effort) }}%</td>
+              {% endif %}
+            {% endif %}
             {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
           </tr>
           {% endfor %}
@@ -601,11 +609,13 @@
               <td class="num">{{ "{:,}".format(patwari_totals.total) }}</td>
               <td class="num">{{ "{:,}".format(patwari_totals.submitted) }}</td>
               <td class="pct">{{ "%.2f"|format(patwari_totals.pct) }}%</td>
+              {% if show_effort %}<td></td>{% endif %}
               {% if has_additions %}{{ additions_cell(patwari_totals.additions) }}{% endif %}
             {% else %}
               <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
               <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
               <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+              {% if show_effort %}<td></td>{% endif %}
               {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
             {% endif %}
           </tr>
@@ -614,7 +624,7 @@
     </div>
     {% endmacro %}
 
-    <div id="by-pct" class="subpanel active">{{ patwari_table(patwari_by_pct) }}</div>
+    <div id="by-pct" class="subpanel active">{{ patwari_table(patwari_by_pct, show_effort=True) }}</div>
     <div id="by-count" class="subpanel">{{ patwari_table(patwari_by_count) }}</div>
   </section>
 

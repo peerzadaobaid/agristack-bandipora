@@ -256,6 +256,20 @@ def build_views(current_df, from_df=None, daily_target=DEFAULT_DAILY_TARGET, teh
     patwari_by_pct = _records(p.sort_values(["pct", "submitted"], ascending=[False, False]))
     patwari_by_count = _records(p.sort_values(["submitted", "pct"], ascending=[False, False]))
 
+    # Relative Effort: each patwari's submitted count as a % of the district-wide top
+    # submitter. Only attached to patwari_by_pct — that's where % Completion misleads.
+    # District-wide means the reference doesn't change when tehsil picker is on.
+    district_p = (current_df.groupby("patwari", as_index=False)["submitted"].sum())
+    if len(district_p) and district_p["submitted"].max() > 0:
+        top_district_submitted = int(district_p["submitted"].max())
+    else:
+        top_district_submitted = 0
+    for r in patwari_by_pct:
+        if top_district_submitted > 0:
+            r["relative_effort"] = (r["submitted"] / top_district_submitted) * 100
+        else:
+            r["relative_effort"] = None
+
     if apply_coloring:
         apply_bands(patwari_by_pct, "pct")
         apply_bands(patwari_by_count, "submitted")
@@ -846,17 +860,28 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
                               ("PATWARI BY COUNT", views["patwari_by_count"], "patwari-count")]:
         if not _include(key):
             continue
+        show_effort = (key == "patwari-pct")
         ws = wb.create_sheet(title)
         p_headers = ["S.NO", "NAME OF PATWARI", "VILLAGES", "TOTAL SURVEY NOS",
                      "SUBMITTED", "% COMPLETION"]
+        if show_effort:
+            p_headers.append("RELATIVE EFFORT")
         if additions_hdr:
             p_headers.append(additions_hdr)
         write_hdr(ws, p_headers)
+        # Column indexes shift when Relative Effort is present
+        effort_col = 7 if show_effort else None
+        additions_col = 8 if show_effort and additions_hdr else (7 if additions_hdr else None)
+        total_cols = len(p_headers)
         for i, row in enumerate(rows, start=1):
             r = i + 1
             vals = [i, row["patwari"], row["villages_list"], row["total"],
                     row["submitted"], round(row["pct"], 2)]
             aligns = [center, left, left, center, center, center]
+            if show_effort:
+                re_val = row.get("relative_effort")
+                vals.append(round(re_val, 2) if re_val is not None else "—")
+                aligns.append(center)
             if additions_hdr:
                 vals.append(row["additions"] if row["additions"] is not None else "—")
                 aligns.append(center)
@@ -865,11 +890,12 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
                 c.alignment = a; c.font = body_font; c.border = border
                 if ci in (4, 5): c.number_format = "#,##0"
                 if ci == 6: c.number_format = '0.00"%"'
-                if additions_hdr and ci == 7 and isinstance(v, int):
+                if show_effort and ci == effort_col and isinstance(v, (int, float)):
+                    c.number_format = '0.00"%"'
+                if additions_col and ci == additions_col and isinstance(v, int):
                     c.number_format = "+#,##0;-#,##0;0"
-            # Apply band color (only when picker is set; row.get('band') is None otherwise)
-            apply_band_fill(ws, r, 7 if additions_hdr else 6, row.get("band"))
-        # TOTAL row — use filtered totals when picker active, district otherwise
+            apply_band_fill(ws, r, total_cols, row.get("band"))
+        # TOTAL row
         pt = len(rows) + 2
         pt_totals = views.get("patwari_totals") if views.get("patwari_totals") else None
         use_filtered = pt_totals is not None and any(r.get("band") for r in rows)
@@ -879,23 +905,25 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
             ws.cell(row=pt, column=4, value=pt_totals["total"]).alignment = center
             ws.cell(row=pt, column=5, value=pt_totals["submitted"]).alignment = center
             ws.cell(row=pt, column=6, value=round(pt_totals["pct"], 2)).alignment = center
-            if additions_hdr:
-                ws.cell(row=pt, column=7, value=pt_totals["additions"] if pt_totals["additions"] is not None else "—").alignment = center
+            if additions_col:
+                ws.cell(row=pt, column=additions_col, value=pt_totals["additions"] if pt_totals["additions"] is not None else "—").alignment = center
         else:
             ws.cell(row=pt, column=4, value=grand["total_khasras"]).alignment = center
             ws.cell(row=pt, column=5, value=grand["submitted"]).alignment = center
             ws.cell(row=pt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
-            if additions_hdr:
-                ws.cell(row=pt, column=7, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
-        tot_cols = 7 if additions_hdr else 6
-        for c in range(1, tot_cols + 1):
+            if additions_col:
+                ws.cell(row=pt, column=additions_col, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
+        # Style the TOTAL row across all columns present
+        for c in range(1, total_cols + 1):
             cc = ws.cell(row=pt, column=c)
             cc.font = tot_font; cc.fill = tot_fill; cc.border = border
             if c in (4, 5): cc.number_format = "#,##0"
             if c == 6: cc.number_format = '0.00"%"'
-            if additions_hdr and c == 7 and isinstance(cc.value, int):
+            if show_effort and c == effort_col: cc.number_format = '0.00"%"'
+            if additions_col and c == additions_col and isinstance(cc.value, int):
                 cc.number_format = "+#,##0;-#,##0;0"
         widths = [7, 26, 50, 18, 14, 14]
+        if show_effort: widths.append(16)
         if additions_hdr: widths.append(22)
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
