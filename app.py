@@ -48,7 +48,11 @@ COL_MATCHERS = {
     "village":   re.compile(r"^village$", re.I),
     "patwari":   re.compile(r"patwari", re.I),
     "khasras":   re.compile(r"khasra|survey", re.I),
-    "submitted": re.compile(r"^submitted$", re.I),
+    # 'submitted' is the patwari's total output. The new file introduces a "Total Submitted"
+    # column which represents this (the file's "submitted" column now means "in-queue awaiting
+    # first check" — a workflow stage, not the total). Prefer "Total Submitted" when present;
+    # fall back to plain "submitted" for older snapshot files.
+    "submitted": re.compile(r"^(total\s+)?submitted$", re.I),
 }
 
 # Optional workflow columns — added recently. Loaded when present, treated as 0 otherwise.
@@ -151,35 +155,33 @@ def load_snapshot(path):
     df = pd.read_excel(xl, sheet_name=sheet)
     cols = _detect_columns(df)
 
-    rename_map = {
-        cols["tehsil"]: "tehsil",
-        cols["village"]: "village",
-        cols["patwari"]: "patwari",
-        cols["khasras"]: "khasras",
-        cols["submitted"]: "submitted",
-    }
-    select_cols = ["tehsil", "village", "patwari", "khasras", "submitted"]
+    # Build the working DataFrame by extracting each column using its ORIGINAL name,
+    # then assigning under its logical name. This avoids collisions when the file has
+    # both "Total Submitted" (which we want as 'submitted') and the file's own
+    # workflow-stage column also named "submitted" — pd.DataFrame.rename would leave
+    # two columns with the same target name.
+    new_df = pd.DataFrame()
+    for logical in ("tehsil", "village", "patwari", "khasras", "submitted"):
+        new_df[logical] = df[cols[logical]].values
     for opt in ("checker", "approved", "verified", "seek_clarification"):
         if opt in cols:
-            rename_map[cols[opt]] = opt
-            select_cols.append(opt)
+            new_df[opt] = df[cols[opt]].values
 
-    df = df.rename(columns=rename_map)[select_cols].copy()
     # Numeric coercion
     for numcol in ("khasras", "submitted", "approved", "verified", "seek_clarification"):
-        if numcol in df.columns:
-            df[numcol] = pd.to_numeric(df[numcol], errors="coerce").fillna(0).astype(int)
+        if numcol in new_df.columns:
+            new_df[numcol] = pd.to_numeric(new_df[numcol], errors="coerce").fillna(0).astype(int)
         else:
-            df[numcol] = 0  # missing workflow columns default to zero
+            new_df[numcol] = 0
     # String cleanup
     for scol in ("tehsil", "village", "patwari", "checker"):
-        if scol in df.columns:
-            df[scol] = df[scol].astype(str).str.strip().replace({"nan": "", "NaN": "", "None": ""})
-    df = df[(df["village"] != "") & (df["village"].str.lower() != "nan")]
+        if scol in new_df.columns:
+            new_df[scol] = new_df[scol].astype(str).str.strip().replace({"nan": "", "NaN": "", "None": ""})
+    new_df = new_df[(new_df["village"] != "") & (new_df["village"].str.lower() != "nan")]
     # Derive sub-division from tehsil
-    df["subdivision"] = df["tehsil"].str.upper().map(TEHSIL_TO_SUBDIV).fillna("UNKNOWN")
-    _df_cache[path] = df
-    return df
+    new_df["subdivision"] = new_df["tehsil"].str.upper().map(TEHSIL_TO_SUBDIV).fillna("UNKNOWN")
+    _df_cache[path] = new_df
+    return new_df
 
 
 # ---------- Helpers ----------
