@@ -9,6 +9,11 @@
   .subhead { font-size: 9pt; color: #4A6B4E; letter-spacing: 1pt; text-transform: uppercase; margin-bottom: 6pt; }
   .meta { color: #7A7568; font-size: 8pt; margin-bottom: 10pt; padding-bottom: 6pt; border-bottom: 0.5pt solid #ccc; }
   .meta strong { color: #1F3F2E; }
+  .metric-note {
+    background-color: #FDFBF5; border-left: 2pt solid #1F3F2E;
+    padding: 5pt 7pt; margin-bottom: 8pt; font-size: 8pt; color: #2A2E28; line-height: 1.4;
+  }
+  .metric-note strong { color: #1F3F2E; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 8pt; }
   thead th { background-color: #1F3F2E; color: white; padding: 5pt 6pt; text-align: left; font-size: 7.5pt; font-weight: bold; }
   tbody td { padding: 3pt 6pt; border-bottom: 0.5pt solid #ddd; font-size: 8pt; vertical-align: top; }
@@ -20,17 +25,6 @@
   .neg { color: #A54B2A; font-weight: bold; }
   .zero, .na { color: #999; }
   .pagebreak { page-break-before: always; }
-  .metric-note {
-    background-color: #FDFBF5;
-    border-left: 2pt solid #1F3F2E;
-    padding: 5pt 7pt;
-    margin-bottom: 8pt;
-    font-size: 8pt;
-    color: #2A2E28;
-    line-height: 1.4;
-  }
-  .metric-note strong { color: #1F3F2E; }
-  /* Band-colored rows for filtered/coloring views */
   tr.band-green td   { background-color: #DDF0D8; }
   tr.band-yellow td  { background-color: #FFF3CD; }
   tr.band-red td     { background-color: #F8D7DA; }
@@ -59,31 +53,65 @@
   {% if panel.type == 'tehsil' %}
   <table>
     <thead><tr>
-      <th style="width:5%">S.NO</th><th>Tehsil</th><th style="width:8%">Villages</th>
-      <th style="width:12%">Total Survey Nos</th><th style="width:10%">Daily Target</th>
-      <th style="width:10%">Submitted</th><th style="width:10%">% Completion</th>
-      {% if has_additions %}<th style="width:13%">{{ additions_label }}</th>{% endif %}
+      <th style="width:6%">S.NO</th><th style="width:20%">Tehsil</th><th style="width:9%">Villages</th>
+      <th style="width:14%">Total Survey Nos</th><th style="width:11%">Submitted</th>
+      <th style="width:12%">% Completion</th>
+      {% if has_additions %}<th style="width:14%">{{ additions_label }}</th>{% endif %}
+      <th style="width:14%">% Approved</th>
     </tr></thead>
     <tbody>
     {% for row in panel.rows %}
       <tr><td class="center">{{ loop.index }}</td><td>{{ row.tehsil }}</td>
       <td class="num">{{ "{:,}".format(row.villages) }}</td>
       <td class="num">{{ "{:,}".format(row.total) }}</td>
-      <td class="num">{{ "{:,}".format(row.daily_target) }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
       <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
       {% if has_additions %}<td class="add">{{ fmt_add(row.additions) }}</td>{% endif %}
+      <td class="pct">{{ "%.2f"|format(row.pct_approved) }}%</td>
       </tr>
     {% endfor %}
     </tbody>
     <tfoot><tr><td></td><td>TOTAL</td>
       <td class="num">{{ "{:,}".format(grand.villages) }}</td>
       <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
-      <td class="num">{{ "{:,}".format(grand.daily_target) }}</td>
       <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
       <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
       {% if has_additions %}<td class="add">{{ fmt_add(grand.additions) }}</td>{% endif %}
+      <td class="pct">{{ "%.2f"|format(grand.overall_pct_approved) }}%</td>
     </tr></tfoot>
+  </table>
+
+  {% elif panel.type == 'overall' %}
+  <div class="metric-note">
+    <strong>Khasras Verified</strong> = verified + approved (any khasra that has reached verification or beyond).
+    <strong>Khasras Approved</strong> = only those with final approval.
+  </div>
+  <table>
+    <thead><tr>
+      <th style="width:5%">S.NO</th><th>Tehsil</th>
+      <th style="width:18%">Total Khasras</th>
+      <th style="width:20%">Khasras Submitted</th>
+      <th style="width:20%">Khasras Verified</th>
+      <th style="width:20%">Khasras Approved</th>
+    </tr></thead>
+    <tbody>
+    {% for row in panel.rows %}
+      <tr><td class="center">{{ loop.index }}</td><td>{{ row.tehsil }}</td>
+      <td class="num">{{ "{:,}".format(row.total) }}</td>
+      <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+      <td class="num">{{ "{:,}".format(row.verified) }}</td>
+      <td class="num">{{ "{:,}".format(row.approved) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    {% if panel.totals %}
+    <tfoot><tr><td></td><td>TOTAL</td>
+      <td class="num">{{ "{:,}".format(panel.totals.total) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.submitted) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.verified) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.approved) }}</td>
+    </tr></tfoot>
+    {% endif %}
   </table>
 
   {% elif panel.type == 'patwari' %}
@@ -109,11 +137,8 @@
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
       <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
       {% if show_effort %}
-        {% if row.relative_effort is none %}
-          <td class="pct">—</td>
-        {% else %}
-          <td class="pct">{{ "%.2f"|format(row.relative_effort) }}%</td>
-        {% endif %}
+        {% if row.relative_effort is none %}<td class="pct">—</td>
+        {% else %}<td class="pct">{{ "%.2f"|format(row.relative_effort) }}%</td>{% endif %}
       {% endif %}
       {% if has_additions %}<td class="add">{{ fmt_add(row.additions) }}</td>{% endif %}
       </tr>
@@ -137,11 +162,17 @@
   </table>
 
   {% elif panel.type == 'checker' %}
+  <div class="metric-note">
+    <strong>% Completion</strong> = (Verified + Approved + Seek Clarification) ÷ Submitted × 100. The <strong>Verified + Approved</strong> column shows work the checker has passed; Seek Clarification is included in the % because it's also work the checker has processed.
+  </div>
   <table>
     <thead><tr>
-      <th style="width:5%">S.NO</th><th style="width:20%">Checker</th><th style="width:10%">Sub-Division</th>
-      <th>Villages</th><th style="width:11%">Total Survey Nos</th><th style="width:9%">Daily Target</th>
-      <th style="width:9%">Submitted</th><th style="width:9%">% Completion</th>
+      <th style="width:4%">S.NO</th><th style="width:18%">Checker</th><th style="width:9%">Sub-Division</th>
+      <th>Villages</th>
+      <th style="width:10%">Total Survey Nos</th>
+      <th style="width:8%">Submitted</th>
+      <th style="width:11%">Verified + Approved</th>
+      <th style="width:9%">% Completion</th>
       {% if has_additions %}<th style="width:11%">{{ additions_label }}</th>{% endif %}
     </tr></thead>
     <tbody>
@@ -149,52 +180,20 @@
       <tr><td class="center">{{ loop.index }}</td><td>{{ row.name }}</td><td>{{ row.subdivision }}</td>
       <td class="villages">{{ row.villages_list }}</td>
       <td class="num">{{ "{:,}".format(row.total) }}</td>
-      <td class="num">{{ "{:,}".format(row.daily_target) }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+      <td class="num">{{ "{:,}".format(row.verified_plus_approved) }}</td>
       <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
       {% if has_additions %}<td class="add">{{ fmt_add(row.additions) }}</td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>
-    {% if checker_totals %}
+    {% if panel.totals %}
     <tfoot><tr><td></td><td>TOTAL</td><td></td><td></td>
-      <td class="num">{{ "{:,}".format(checker_totals.total) }}</td>
-      <td class="num">{{ "{:,}".format(checker_totals.daily_target) }}</td>
-      <td class="num">{{ "{:,}".format(checker_totals.submitted) }}</td>
-      <td class="pct">{{ "%.2f"|format(checker_totals.pct) }}%</td>
-      {% if has_additions %}<td class="add">{{ fmt_add(checker_totals.additions) }}</td>{% endif %}
-    </tr></tfoot>
-    {% endif %}
-  </table>
-
-  {% elif panel.type == 'subdivision' %}
-  <table>
-    <thead><tr>
-      <th style="width:5%">S.NO</th><th style="width:15%">Sub-Division</th><th style="width:10%">Villages</th>
-      <th style="width:14%">Total Survey Nos</th><th style="width:12%">Daily Target</th>
-      <th style="width:12%">Submitted</th><th style="width:12%">% Completion</th>
-      {% if has_additions %}<th style="width:20%">{{ additions_label }}</th>{% endif %}
-    </tr></thead>
-    <tbody>
-    {% for row in panel.rows %}
-      <tr><td class="center">{{ loop.index }}</td><td>{{ row.name }}</td>
-      <td class="num">{{ "{:,}".format(row.villages) }}</td>
-      <td class="num">{{ "{:,}".format(row.total) }}</td>
-      <td class="num">{{ "{:,}".format(row.daily_target) }}</td>
-      <td class="num">{{ "{:,}".format(row.submitted) }}</td>
-      <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
-      {% if has_additions %}<td class="add">{{ fmt_add(row.additions) }}</td>{% endif %}
-      </tr>
-    {% endfor %}
-    </tbody>
-    {% if subdiv_totals %}
-    <tfoot><tr><td></td><td>TOTAL</td>
-      <td class="num">{{ "{:,}".format(subdiv_totals.villages) }}</td>
-      <td class="num">{{ "{:,}".format(subdiv_totals.total) }}</td>
-      <td class="num">{{ "{:,}".format(subdiv_totals.daily_target) }}</td>
-      <td class="num">{{ "{:,}".format(subdiv_totals.submitted) }}</td>
-      <td class="pct">{{ "%.2f"|format(subdiv_totals.pct) }}%</td>
-      {% if has_additions %}<td class="add">{{ fmt_add(subdiv_totals.additions) }}</td>{% endif %}
+      <td class="num">{{ "{:,}".format(panel.totals.total) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.submitted) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.verified_plus_approved) }}</td>
+      <td class="pct">{{ "%.2f"|format(panel.totals.pct) }}%</td>
+      {% if has_additions %}<td class="add">{{ fmt_add(panel.totals.additions) }}</td>{% endif %}
     </tr></tfoot>
     {% endif %}
   </table>
@@ -202,10 +201,12 @@
   {% elif panel.type == 'village' %}
   <table>
     <thead><tr>
-      <th style="width:5%">S.NO</th><th style="width:10%">Tehsil</th><th>Village</th>
-      <th style="width:13%">Total Survey Nos</th><th style="width:18%">Name of Patwari</th>
-      <th style="width:11%">Submitted</th>
-      {% if has_additions %}<th style="width:14%">{{ additions_label }}</th>{% endif %}
+      <th style="width:4%">S.NO</th><th style="width:9%">Tehsil</th><th>Village</th>
+      <th style="width:11%">Total Survey Nos</th><th style="width:15%">Name of Patwari</th>
+      <th style="width:9%">Submitted</th>
+      <th style="width:8%">Verified</th>
+      <th style="width:8%">Approved</th>
+      {% if has_additions %}<th style="width:11%">{{ additions_label }}</th>{% endif %}
     </tr></thead>
     <tbody>
     {% for row in panel.rows %}
@@ -213,27 +214,22 @@
       <td class="num">{{ "{:,}".format(row.total) }}</td>
       <td>{{ row.patwari }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+      <td class="num">{{ "{:,}".format(row.verified) }}</td>
+      <td class="num">{{ "{:,}".format(row.approved) }}</td>
       {% if has_additions %}<td class="add">{{ fmt_add(row.additions) }}</td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>
+    {% if panel.totals %}
     <tfoot><tr><td></td><td></td><td>TOTAL</td>
-      <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td><td></td>
-      <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-      {% if has_additions %}<td class="add">{{ fmt_add(grand.additions) }}</td>{% endif %}
+      <td class="num">{{ "{:,}".format(panel.totals.total) }}</td>
+      <td></td>
+      <td class="num">{{ "{:,}".format(panel.totals.submitted) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.verified) }}</td>
+      <td class="num">{{ "{:,}".format(panel.totals.approved) }}</td>
+      {% if has_additions %}<td class="add">{{ fmt_add(panel.totals.additions) }}</td>{% endif %}
     </tr></tfoot>
-  </table>
-
-  {% elif panel.type == 'not-started' %}
-  <table>
-    <thead><tr>
-      <th style="width:5%">S.NO</th><th>Village</th><th style="width:15%">Tehsil</th><th style="width:25%">Name of Patwari</th>
-    </tr></thead>
-    <tbody>
-    {% for row in panel.rows %}
-      <tr><td class="center">{{ loop.index }}</td><td>{{ row.village }}</td><td>{{ row.tehsil }}</td><td>{{ row.patwari }}</td></tr>
-    {% endfor %}
-    </tbody>
+    {% endif %}
   </table>
   {% endif %}
 
