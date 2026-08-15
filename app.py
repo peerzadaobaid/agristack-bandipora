@@ -190,18 +190,27 @@ def _pct(num, denom):
     return (num / denom * 100) if denom > 0 else 0.0
 
 
-def apply_bands(rows, sort_key):
-    """Attach 'band' key to each row. Rows must already be sorted high-to-low."""
+def apply_bands(rows, sort_key, ascending=False):
+    """Attach 'band' key ('green'|'yellow'|'red') to each row.
+    Semantic: green = doing well, red = struggling.
+    - ascending=False (default): rows sorted high-to-low by sort_key (best first).
+      Top 30% get green, bottom 30% red.
+    - ascending=True: rows sorted low-to-high (worst first).
+      Top 30% get red (they're the strugglers), bottom 30% green."""
     n = len(rows)
     if n == 0:
         return
     top_n = round(n * 0.3)
     bot_n = round(n * 0.3)
+    if ascending:
+        top_band, bot_band = "red", "green"
+    else:
+        top_band, bot_band = "green", "red"
     for i, r in enumerate(rows):
         if i < top_n:
-            r["band"] = "green"
+            r["band"] = top_band
         elif i >= n - bot_n:
-            r["band"] = "red"
+            r["band"] = bot_band
         else:
             r["band"] = "yellow"
 
@@ -290,7 +299,7 @@ def build_views(current_df, from_df=None, tehsils_filter=None):
             "additions": None if r["additions"] is None else int(r["additions"]),
         } for _, r in frame.iterrows()]
 
-    patwari_by_pct = _p_records(p.sort_values(["pct", "submitted"], ascending=[False, False]))
+    patwari_by_pct = _p_records(p.sort_values(["pct", "submitted"], ascending=[True, True]))
     patwari_by_count = _p_records(p.sort_values(["submitted", "pct"], ascending=[False, False]))
 
     # Relative Effort — district-wide top submission count, only for By %
@@ -299,8 +308,10 @@ def build_views(current_df, from_df=None, tehsils_filter=None):
         r["relative_effort"] = (r["submitted"] / district_top * 100) if district_top > 0 else None
 
     if apply_coloring:
-        apply_bands(patwari_by_pct, "pct")
-        apply_bands(patwari_by_count, "submitted")
+        # By % is sorted low→high: strugglers at top → red at top, green at bottom
+        apply_bands(patwari_by_pct, "pct", ascending=True)
+        # By Count is sorted high→low: top performers first → green at top, red at bottom
+        apply_bands(patwari_by_count, "submitted", ascending=False)
 
     # Patwari totals for TOTAL row — always from displayed rows so filtered/unfiltered both work
     if patwari_by_pct:
@@ -349,8 +360,8 @@ def build_views(current_df, from_df=None, tehsils_filter=None):
                 "pct": _pct(processed, int(row["submitted"])),
                 "additions": (int(row["submitted"]) - int(old_by_ck.get(row["checker"], 0))) if has_additions else None,
             })
-        # Sort by V+A (the value column) descending — matches "checker's actual output"
-        checker_rows.sort(key=lambda r: r["verified_plus_approved"], reverse=True)
+        # Sort by % Completion ascending — strugglers first, best performers at bottom
+        checker_rows.sort(key=lambda r: r["pct"])
         c_sub = sum(r["submitted"] for r in checker_rows)
         c_va = sum(r["verified_plus_approved"] for r in checker_rows)
         c_proc = sum(r["processed_incl_seekclar"] for r in checker_rows)
