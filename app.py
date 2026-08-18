@@ -504,6 +504,12 @@ def resolve_dates(snapshots, from_param, to_param):
 # ---------- Routes ----------
 
 @app.route("/")
+def landing():
+    """Landing hub with two links to the sub-dashboards."""
+    return render_template("landing.html")
+
+
+@app.route("/data-punching")
 def index():
     snapshots = all_snapshots()
     if not snapshots:
@@ -538,6 +544,54 @@ def index():
         coloring_active=(tehsils_filter is not None),
         **views,
     )
+
+
+@app.route("/farmer-id")
+def farmer_id():
+    """Serve the farmer-ID generation HTML. User uploads it as templates/farmer_id.html
+    via GitHub — each upload replaces the previous. If not yet uploaded, show a
+    friendly placeholder. A non-intrusive "back to landing" link is injected at
+    serve time so we never modify the user's uploaded file on disk."""
+    path = os.path.join("templates", "farmer_id.html")
+    if not os.path.exists(path):
+        return render_template("farmer_id_missing.html"), 200
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Inject a fixed-position back link right after the opening <body> tag. Use a
+    # scoped <style> block with a specific ID so it can be responsive without
+    # colliding with the uploaded file's own CSS.
+    back_link = (
+        '<style>'
+        '#agr-back-hub{'
+        'position:fixed;top:14px;left:14px;z-index:9999;'
+        'background:#FDFBF5;color:#1F3F2E;'
+        'padding:9px 16px;border:1px solid #D6D1C2;border-radius:6px;'
+        'text-decoration:none;'
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;"
+        'font-size:13px;font-weight:500;letter-spacing:0.02em;'
+        'box-shadow:0 2px 8px rgba(0,0,0,0.12);'
+        'transition:background 140ms,transform 140ms;'
+        'display:inline-block;'
+        '}'
+        '#agr-back-hub:hover{background:#E8EEDE;transform:translateY(-1px);}'
+        '@media (max-width:720px){'
+        '#agr-back-hub{left:auto;right:14px;padding:7px 12px;font-size:12px;}'
+        '}'
+        '</style>'
+        '<a href="/" id="agr-back-hub" '
+        'aria-label="Back to Progress Monitoring landing page">'
+        '\u2190 &nbsp;Progress Monitoring'
+        '</a>'
+    )
+    body_re = re.compile(r"(<body[^>]*>)", re.IGNORECASE)
+    m = body_re.search(content)
+    if m:
+        content = content[:m.end()] + back_link + content[m.end():]
+    else:
+        content = back_link + content
+
+    return Response(content, mimetype="text/html; charset=utf-8")
 
 
 def _check_download_password():

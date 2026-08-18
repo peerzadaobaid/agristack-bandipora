@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agristack Bandipora Progress Monitoring</title>
+<style>
+  :root {
+    --bg: #F6F3EC;
+    --paper: #FDFBF5;
+    --ink: #1F3F2E;
+    --ink-2: #4A6B4E;
+    --text: #2A2E28;
+    --mute: #7A7568;
+    --rule: #D6D1C2;
+    --tint-good: #E8EEDE;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 60px 24px 40px; }
+
+  .wordmark {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    font-size: 32px;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+    line-height: 1;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+
+  h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    font-size: 40px;
+    line-height: 1.15;
+    color: var(--ink);
+    margin: 24px 0 8px 0;
+    letter-spacing: -0.01em;
+    text-align: center;
+  }
+  .subhead {
+    color: var(--mute);
+    text-align: center;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+  }
+  .meta {
+    color: var(--mute);
+    text-align: center;
+    font-size: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 48px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--ink-2);
+    font-weight: 500;
+    margin-bottom: 20px;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  a.card {
+    display: block;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--ink);
+    padding: 28px 32px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 140ms, border-color 140ms, transform 140ms;
+    position: relative;
+  }
+  a.card:hover {
+    background: var(--tint-good);
+    border-color: var(--ink);
+    border-left-color: var(--ink);
+    transform: translateY(-1px);
+  }
+  a.card:focus {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+  .card .num {
+    font-family: Georgia, serif;
+    font-size: 16px;
+    color: var(--mute);
+    margin-bottom: 8px;
+    letter-spacing: 0.02em;
+  }
+  .card .title {
+    font-family: Georgia, serif;
+    font-size: 24px;
+    color: var(--ink);
+    line-height: 1.2;
+    margin-bottom: 10px;
+  }
+  .card .desc {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.55;
+    max-width: 640px;
+  }
+  .card .arrow {
+    position: absolute;
+    top: 32px;
+    right: 32px;
+    color: var(--ink);
+    font-size: 22px;
+    font-family: Georgia, serif;
+    transition: transform 140ms;
+  }
+  a.card:hover .arrow { transform: translateX(4px); }
+
+  .credit {
+    margin-top: 60px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    text-align: center;
+  }
+  .credit .name {
+    font-family: Georgia, serif;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .credit .role {
+    font-size: 12px;
+    color: var(--mute);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 32px 16px 24px; }
+    h1 { font-size: 28px; }
+    a.card { padding: 22px 24px; }
+    .card .title { font-size: 20px; }
+    .card .arrow { top: 22px; right: 22px; font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="wordmark">AgriStack</div>
+  <h1>Agristack Bandipora Progress Monitoring</h1>
+  <div class="subhead">District Bandipora  ·  Jammu &amp; Kashmir</div>
+  <div class="meta">Select a dashboard to continue</div>
+
+  <div class="section-label">Dashboards</div>
+  <div class="cards">
+    <a href="/data-punching" class="card">
+      <div class="num">01</div>
+      <div class="title">Agristack Bandipora Data Punching Progress</div>
+      <div class="desc">Tehsil-wise, patwari-wise, checker-wise, and village-wise progress on data submission and workflow (verification and approval). Includes tehsil filter with color banding, date-range comparison, and downloadable Excel &amp; PDF reports for every view.</div>
+      <div class="arrow">→</div>
+    </a>
+
+    <a href="/farmer-id" class="card">
+      <div class="num">02</div>
+      <div class="title">Farmer ID Generation Progress</div>
+      <div class="desc">Farmer enrollment status by tehsil and village — Target, Issued, and Approved counts with drill-down from tehsil to village level.</div>
+      <div class="arrow">→</div>
+    </a>
+  </div>
+
+  <div class="credit">
+    <div class="name">Obaid Peerzada</div>
+    <div class="role">Naib Tehsildar, Sumbal  ·  Developed &amp; Maintained</div>
+  </div>
+</div>
+</body>
+</html>

@@ -166,9 +166,38 @@
     .tab { padding: 10px 12px; font-size: 13px; }
     thead th, tbody td, tfoot td { padding: 8px 10px; }
   }
+
+  /* Fixed "back to hub" link — matches the one on /farmer-id */
+  .back-to-hub {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    z-index: 9999;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 9px 16px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    text-decoration: none;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    transition: background 140ms, transform 140ms;
+  }
+  .back-to-hub:hover {
+    background: var(--tint-good);
+    transform: translateY(-1px);
+  }
+  @media (max-width: 720px) {
+    /* On narrow screens, move to top-right so it doesn't overlap the wordmark */
+    .back-to-hub { left: auto; right: 14px; padding: 7px 12px; font-size: 12px; }
+  }
 </style>
 </head>
 <body>
+<a href="/" class="back-to-hub" aria-label="Back to Progress Monitoring landing page">&larr; &nbsp;Progress Monitoring</a>
 <div class="wrap">
   <div class="top-bar"><div class="wordmark">AgriStack</div></div>
 
