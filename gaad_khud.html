@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gaad Khud — Farmer ID Registration Tracking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#faf9f5; --ink:#0f172a; --body:#334155; --muted:#64748b;
+    --line:#e2e8f0; --line-strong:#cbd5e1;
+    --navy:#1e3a5f; --navy-hover:#142a47;
+    --forest:#14532d; --forest-soft:#f0fdf4; --forest-line:#86efac;
+    --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fcd34d;
+    --danger:#b91c1c;
+    --font-display:'Fraunces','Georgia',serif;
+    --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI','Roboto',Arial,sans-serif;
+    --font-mono:ui-monospace,'SF Mono','Menlo','Monaco',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:var(--font-body); color:var(--body); background:var(--paper);
+    line-height:1.5; font-size:16px; -webkit-font-smoothing:antialiased;
+    padding-bottom:60px;
+  }
+
+  /* ---------- HEADER ---------- */
+  .topbar{background:var(--navy); color:#fff; padding:16px 24px}
+  .topbar-inner{max-width:1280px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:16px; flex-wrap:wrap}
+  .topbar h1{font-family:var(--font-display); font-weight:500;
+    font-size:22px; letter-spacing:-.01em; line-height:1.15}
+  .topbar .sub{font-size:12.5px; opacity:.8; letter-spacing:.06em;
+    text-transform:uppercase; margin-top:2px}
+  .submitter-badge{background:rgba(255,255,255,.12);
+    border:1px solid rgba(255,255,255,.22); padding:8px 14px;
+    font-size:13.5px; line-height:1.35}
+  .submitter-badge .lbl{font-size:10.5px; letter-spacing:.14em;
+    text-transform:uppercase; opacity:.75; display:block}
+  .submitter-badge .nm{font-family:var(--font-display); font-size:15px;
+    font-weight:500}
+
+  /* ---------- STATS ---------- */
+  .stats{background:#fff; border-bottom:1px solid var(--line); padding:16px 24px}
+  .stats-inner{max-width:1280px; margin:0 auto;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+    gap:16px; align-items:center}
+  .stat .label{font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted); font-weight:600}
+  .stat .value{font-family:var(--font-display); font-size:24px;
+    font-weight:500; color:var(--ink); line-height:1.1; margin-top:2px}
+  .stat .value.issued{color:var(--forest)}
+  .stat .value.pending{color:var(--amber)}
+  .progress-wrap{grid-column:1/-1}
+  .progress-bar{height:10px; background:var(--line); overflow:hidden}
+  .progress-fill{height:100%; background:var(--forest); transition:width .3s}
+  .progress-text{font-size:12.5px; color:var(--muted); margin-top:5px}
+
+  /* ---------- TOOLBAR ---------- */
+  .toolbar{background:#fff; border-bottom:1px solid var(--line); padding:12px 24px;
+    position:sticky; top:0; z-index:20}
+  .toolbar-inner{max-width:1280px; margin:0 auto;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .toolbar input[type=text]{flex:1; min-width:200px; padding:9px 12px;
+    border:1px solid var(--line-strong); background:#fff;
+    font-family:inherit; font-size:14px; color:var(--ink)}
+  .toolbar input[type=text]:focus{outline:none; border-color:var(--navy);
+    box-shadow:0 0 0 3px rgba(30,58,95,.1)}
+  .toolbar select{padding:9px 12px; border:1px solid var(--line-strong);
+    background:#fff; font-family:inherit; font-size:14px; color:var(--ink)}
+  .dlbtn{margin-left:auto; padding:9px 15px; border:1px solid var(--line-strong);
+    background:#fff; font-family:inherit; font-size:13.5px; font-weight:500;
+    color:var(--body); cursor:pointer; white-space:nowrap; transition:all .12s}
+  .dlbtn:hover:not(:disabled){border-color:var(--forest); color:var(--forest);
+    background:var(--forest-soft)}
+  .dlbtn:disabled{opacity:.55; cursor:wait}
+  .save-state{margin-left:14px; font-size:12.5px; color:var(--muted);
+    display:flex; align-items:center; gap:7px; white-space:nowrap}
+  .save-state .dot{width:8px; height:8px; border-radius:50%;
+    background:var(--line-strong); flex-shrink:0}
+  .save-state.saving .dot{background:var(--amber); animation:pulse 1s infinite}
+  .save-state.saved .dot{background:var(--forest)}
+  .save-state.error .dot{background:var(--danger)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* ---------- TABLE ---------- */
+  .table-wrap{max-width:1280px; margin:0 auto; padding:20px 24px}
+  table{width:100%; background:#fff; border-collapse:collapse;
+    border:1px solid var(--line); font-size:13.5px}
+  thead th{background:var(--navy); color:#fff; padding:11px 10px;
+    text-align:left; font-weight:600; white-space:nowrap;
+    font-size:11px; text-transform:uppercase; letter-spacing:.06em}
+  tbody tr{border-bottom:1px solid var(--line)}
+  tbody tr.done-issued{background:var(--forest-soft)}
+  tbody tr.done-pending{background:var(--amber-soft)}
+  tbody tr.open{background:#fff8ea}
+  tbody td{padding:9px 10px; vertical-align:middle}
+  td.sr{font-family:var(--font-mono); font-size:12px;
+    color:var(--muted); text-align:right; width:52px}
+  td.ref{font-family:var(--font-mono); font-size:12.5px; color:var(--body);
+    white-space:nowrap; width:82px; text-align:center}
+
+  /* landholder: name, parentage and type stacked, centred in the column */
+  td.who{min-width:180px; text-align:center}
+  thead th.who-h{text-align:center}
+  .who .nm{font-weight:600; color:var(--ink); font-size:14px;
+    line-height:1.25; display:block;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .who .meta{font-size:12px; color:var(--muted); line-height:1.3;
+    margin-top:1px; display:flex; align-items:center;
+    justify-content:center; gap:6px;
+    overflow:hidden; white-space:nowrap}
+  .who .par{overflow:hidden; text-overflow:ellipsis}
+  .who .refs{display:none}
+  .type-tag{font-size:9.5px; letter-spacing:.05em; text-transform:uppercase;
+    font-weight:700; padding:1px 5px; border:1px solid var(--line-strong);
+    color:var(--muted); white-space:nowrap; flex-shrink:0}
+  .type-tag.OWNER{border-color:var(--navy); color:var(--navy)}
+  .type-tag.BOTH{border-color:var(--amber); color:var(--amber)}
+
+  /* status column — the working area */
+  td.act{width:390px}
+  .act-row{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+  .seg{display:inline-flex; flex-shrink:0}
+  .sbtn{padding:7px 17px; border:1px solid var(--line-strong);
+    background:#fff; font-family:inherit; font-size:13px; font-weight:600;
+    cursor:pointer; color:var(--muted); transition:all .12s}
+  .sbtn+.sbtn{margin-left:-1px}
+  .sbtn:hover{border-color:var(--navy); color:var(--navy); z-index:1; position:relative}
+  .sbtn.on-issued{background:var(--forest); border-color:var(--forest); color:#fff}
+  .sbtn.on-pending{background:var(--amber); border-color:var(--amber); color:#fff}
+  .rbtn{border:1px solid var(--line-strong); background:#fff; cursor:pointer;
+    color:var(--muted); font-family:inherit; font-size:15px; line-height:1;
+    padding:6px 9px; transition:all .12s; flex-shrink:0}
+  .rbtn:hover{border-color:var(--danger); color:var(--danger); background:#fef2f2}
+  .reason-chip{font-size:11.5px; color:var(--amber);
+    line-height:1.3; cursor:pointer; white-space:normal;
+    flex:1; min-width:120px}
+  .reason-chip:hover{text-decoration:underline}
+  .reason-chip.missing{color:var(--danger); font-weight:600}
+
+  /* expand row */
+  tr.expand td{padding:0; background:#fffbef;
+    border-bottom:2px solid var(--amber-line)}
+  .expand-inner{padding:16px 18px; display:flex; gap:14px;
+    align-items:flex-end; flex-wrap:wrap}
+  .expand-inner .fld{display:flex; flex-direction:column; gap:5px; flex:1;
+    min-width:240px}
+  .expand-inner label{font-size:10.5px; letter-spacing:.12em;
+    text-transform:uppercase; font-weight:600; color:var(--muted)}
+  .expand-inner select,.expand-inner input{padding:9px 11px;
+    border:1px solid var(--line-strong); background:#fff;
+    font-family:inherit; font-size:14px; color:var(--ink); width:100%}
+  .expand-inner select:focus,.expand-inner input:focus{outline:none;
+    border-color:var(--amber); box-shadow:0 0 0 3px rgba(180,83,9,.1)}
+  .btn{padding:9px 18px; border:none; background:var(--forest); color:#fff;
+    font-family:inherit; font-size:14px; font-weight:500; cursor:pointer}
+  .btn:hover{background:#0f3e21}
+  .btn.ghost{background:#fff; color:var(--body); border:1px solid var(--line-strong)}
+  .btn.ghost:hover{background:#f8fafc; color:var(--ink)}
+
+  /* ---------- PAGINATION ---------- */
+  .pager{max-width:1280px; margin:0 auto; padding:4px 24px 24px;
+    display:flex; gap:6px; align-items:center; justify-content:center;
+    flex-wrap:wrap}
+  .pager button{padding:7px 13px; border:1px solid var(--line-strong);
+    background:#fff; font-family:inherit; font-size:13px; cursor:pointer;
+    color:var(--body)}
+  .pager button:hover:not(:disabled){background:#f8fafc; border-color:var(--navy)}
+  .pager button.active{background:var(--navy); color:#fff; border-color:var(--navy)}
+  .pager button:disabled{opacity:.35; cursor:not-allowed}
+  .pager .info{font-size:12.5px; color:var(--muted); margin-left:10px}
+
+  /* ---------- MISC ---------- */
+  .empty{padding:40px 20px; text-align:center; color:var(--muted); font-size:14px}
+  .banner{max-width:1280px; margin:16px auto 0; padding:14px 18px;
+    border-left:3px solid; font-size:14px}
+  .banner.err{background:#fef2f2; border-color:var(--danger); color:#7f1d1d}
+  .banner.warn{background:var(--amber-soft); border-color:var(--amber); color:#78350f}
+  .loading{padding:60px 20px; text-align:center; color:var(--muted)}
+  .spinner{display:inline-block; width:22px; height:22px;
+    border:3px solid var(--line); border-top-color:var(--navy);
+    border-radius:50%; animation:spin .8s linear infinite;
+    vertical-align:middle; margin-right:10px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .toast{position:fixed; bottom:22px; right:22px; padding:12px 20px;
+    background:var(--ink); color:#fff; font-size:14px; z-index:200;
+    opacity:0; transform:translateY(14px);
+    transition:opacity .22s,transform .22s;
+    box-shadow:0 6px 24px rgba(0,0,0,.2)}
+  .toast.show{opacity:1; transform:translateY(0)}
+  .toast.err{background:var(--danger)}
+  footer{max-width:1280px; margin:0 auto; padding:24px;
+    text-align:center; font-size:12px; color:var(--muted);
+    border-top:1px solid var(--line)}
+  footer .office{font-family:var(--font-display); font-style:italic;
+    font-size:13px; color:var(--body)}
+
+  @media(max-width:900px){
+    td.act{width:330px}
+    .sbtn{padding:7px 13px}
+  }
+
+  /* ---------- MOBILE: rows become cards ---------- */
+  @media(max-width:720px){
+    .topbar,.stats,.toolbar,.pager{padding-left:14px; padding-right:14px}
+    .table-wrap{padding:14px}
+    .stat .value{font-size:20px}
+    .toolbar input[type=text]{min-width:0; flex-basis:100%}
+    .save-state{margin-left:0}
+    .dlbtn{margin-left:0; flex:1}
+
+    table{border:none; background:transparent; font-size:14px}
+    thead{display:none}
+    tbody{display:block}
+    tbody tr{display:block; background:#fff; border:1px solid var(--line);
+      margin-bottom:10px; padding:13px 14px}
+    tbody tr.done-issued{border-left:4px solid var(--forest)}
+    tbody tr.done-pending{border-left:4px solid var(--amber)}
+    tbody tr.open{border-left:4px solid var(--amber)}
+    tbody td{display:block; padding:0; border:none}
+
+    td.sr,td.ref{display:none}
+    td.who{min-width:0; max-width:none; text-align:left}
+    .who .meta{justify-content:flex-start}
+    .who .nm{font-size:16px; white-space:normal}
+    .who .meta{font-size:13px; white-space:normal; margin-top:3px}
+    .who .par{overflow:visible}
+    .who .refs{display:block; font-family:var(--font-mono);
+      font-size:11px; color:var(--muted); margin-top:6px;
+      letter-spacing:.02em}
+
+    td.act{width:auto; margin-top:12px}
+    .act-row{gap:8px}
+    .seg{flex:1; display:flex}
+    .sbtn{flex:1; text-align:center; padding:11px 6px; font-size:13.5px}
+    .rbtn{padding:10px 13px; font-size:16px}
+    .reason-chip{flex-basis:100%; min-width:0; font-size:12.5px; margin-top:2px}
+
+    tr.expand{margin-top:-10px; border-top:none; padding:0}
+    tr.expand td{background:#fffbef}
+    .expand-inner{padding:14px; gap:12px}
+    .expand-inner .fld{min-width:0; flex-basis:100%}
+    .expand-inner .btn{flex:1}
+
+    .empty{padding:30px 14px}
+    .pager button{padding:8px 12px}
+    .pager .info{flex-basis:100%; text-align:center; margin:6px 0 0}
+  }
+
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>Gaad Khud</h1>
+      <div class="sub">Farmer ID Registration Tracking · Tehsil SUMBAL</div>
+    </div>
+    <div class="submitter-badge" id="submitter-badge">
+      <span class="lbl">Data submitted by</span>
+      <span class="nm" id="submitter-name">…</span>
+    </div>
+  </div>
+</div>
+
+<div id="boot" class="loading"><span class="spinner"></span>Loading village data…</div>
+
+<div id="app" style="display:none">
+
+  <div class="stats">
+    <div class="stats-inner">
+      <div class="stat"><div class="label">Total</div>
+        <div class="value" id="s-total">0</div></div>
+      <div class="stat"><div class="label">Issued</div>
+        <div class="value issued" id="s-issued">0</div></div>
+      <div class="stat"><div class="label">Pending</div>
+        <div class="value pending" id="s-pending">0</div></div>
+      <div class="stat"><div class="label">Not yet done</div>
+        <div class="value" id="s-remaining">0</div></div>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="s-fill" style="width:0%"></div></div>
+        <div class="progress-text" id="s-text">0% complete</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="toolbar-inner">
+      <input type="text" id="q" placeholder="Search by name, parentage, khasra, khata or S.No…">
+      <select id="filter">
+        <option value="all">All records</option>
+        <option value="remaining">Not yet done</option>
+        <option value="issued">Issued</option>
+        <option value="pending">Pending</option>
+        <option value="noreason">Pending — reason missing</option>
+      </select>
+      <select id="psize">
+        <option value="50">50 per page</option>
+        <option value="100">100 per page</option>
+        <option value="200">200 per page</option>
+      </select>
+      <button class="dlbtn" id="dl" onclick="downloadExcel()" title="Download all records with the entries made so far">
+        <span id="dl-text">Download Excel</span>
+      </button>
+      <div class="save-state" id="save-state"><span class="dot"></span><span id="save-text">All saved</span></div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>S.No</th>
+          <th class="hide-sm">Khewat</th>
+          <th class="hide-sm">Khata</th>
+          <th class="hide-sm">Khasra</th>
+          <th class="who-h">Landholder</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tb"></tbody>
+    </table>
+    <div class="pager" id="pager"></div>
+  </div>
+
+  <footer>
+    <div class="office">Developed and maintained by Obaid Peerzada</div>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ==========================================================
+const VILLAGE = "Gaad Khud";
+const TEHSIL  = "SUMBAL";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby8dUkGyZaNoLZCH23D15UZZE7DZX9tnfW4FD4rR5o18-dCYu4arnNHXwJEv0DesaJA/exec";
+const RECORDS = [{"sr":1,"khewat":"22","khata":"61","khasra":"23","name":"masmat khatji","parentage":"(D/o) akbar","type":"OWNER"},{"sr":2,"khewat":"3","khata":"4","khasra":"132","name":"mohammad ramzan","parentage":"(S/o) gulam","type":"OWNER"},{"sr":3,"khewat":"3","khata":"4","khasra":"132","name":"ali mohammad","parentage":"(S/o) gulam","type":"OWNER"},{"sr":4,"khewat":"3","khata":"4","khasra":"132","name":"gulam rasool","parentage":"(S/o) gulam","type":"OWNER"},{"sr":5,"khewat":"3","khata":"4","khasra":"132","name":"gulam kadir","parentage":"(S/o) gulam","type":"OWNER"},{"sr":6,"khewat":"3","khata":"4","khasra":"132","name":"mohammad afazal","parentage":"(S/o) gulam","type":"OWNER"},{"sr":7,"khewat":"3","khata":"4","khasra":"132","name":"masmat zooni","parentage":"(D/o) gulam","type":"OWNER"},{"sr":8,"khewat":"3","khata":"4","khasra":"132","name":"masmat daulati","parentage":"(D/o) gulam","type":"OWNER"},{"sr":9,"khewat":"3","khata":"4","khasra":"132","name":"masmat raja","parentage":"(D/o) gulam","type":"OWNER"},{"sr":10,"khewat":"3","khata":"4","khasra":"132","name":"gulam mohammad","parentage":"(S/o) gulam","type":"OWNER"},{"sr":11,"khewat":"19","khata":"58","khasra":"29","name":"masmath sakina","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":12,"khewat":"19","khata":"58","khasra":"29","name":"gulam","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":13,"khewat":"19","khata":"58","khasra":"29","name":"gulam hussain","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":14,"khewat":"19","khata":"58","khasra":"29","name":"akbar","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":15,"khewat":"19","khata":"58","khasra":"29","name":"masmat fatima","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":16,"khewat":"19","khata":"58","khasra":"29","name":"masmat khatji","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":17,"khewat":"19","khata":"58","khasra":"29","name":"masmath rahmi","parentage":"(W/o) bakir","type":"OWNER"},{"sr":18,"khewat":"102","khata":"211","khasra":"17","name":"makbooza malkan","parentage":"(Others) shamlat deh","type":"CULTIVATOR"},{"sr":19,"khewat":"102","khata":"212","khasra":"166","name":"maqbooza alhe islam","parentage":"(Others) maqbooza alhe islam","type":"CULTIVATOR"},{"sr":20,"khewat":"102","khata":"213","khasra":"114","name":"makbooza mehkma irrigation","parentage":"(Others) makbooza mehkma irrigation","type":"CULTIVATOR"},{"sr":21,"khewat":"102","khata":"216","khasra":"264","name":"talib","parentage":"(S/o) alam","type":"CULTIVATOR"},{"sr":22,"khewat":"102","khata":"216","khasra":"264","name":"sultan","parentage":"(S/o) alam","type":"CULTIVATOR"},{"sr":23,"khewat":"102","khata":"216","khasra":"264","name":"ramzan","parentage":"(S/o) rehman","type":"CULTIVATOR"},{"sr":24,"khewat":"102","khata":"217","khasra":"12","name":"shara aam","parentage":"(Others) shara aam","type":"CULTIVATOR"},{"sr":25,"khewat":"102","khata":"218","khasra":"17","name":"mehfooz kascharai","parentage":"(Others) mehfooz kascharai","type":"CULTIVATOR"},{"sr":26,"khewat":"149","khata":"282","khasra":"173","name":"aabadhi","parentage":"(Others) aabadhi deh","type":"CULTIVATOR"},{"sr":27,"khewat":"149","khata":"283","khasra":"182","name":"rehman","parentage":"(S/o) rahim","type":"CULTIVATOR"},{"sr":28,"khewat":"149","khata":"283","khasra":"182","name":"mohd akbar","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":29,"khewat":"149","khata":"283","khasra":"182","name":"ghulam ahmed","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":30,"khewat":"149","khata":"283","khasra":"182","name":"ghulam mohd","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":31,"khewat":"140","khata":"262","khasra":"76","name":"mohammad","parentage":"(S/o) akbar","type":"OWNER"},{"sr":32,"khewat":"141","khata":"263","khasra":"58","name":"mohammad","parentage":"(S/o) talib","type":"OWNER"},{"sr":33,"khewat":"142","khata":"264","khasra":"36","name":"raheem","parentage":"(S/o) talib","type":"OWNER"},{"sr":34,"khewat":"143","khata":"265","khasra":"45","name":"mohammad","parentage":"(S/o) zamaan","type":"OWNER"},{"sr":35,"khewat":"144","khata":"266","khasra":"119","name":"mahda","parentage":"(S/o) alam","type":"OWNER"},{"sr":36,"khewat":"144","khata":"266","khasra":"119","name":"hasan","parentage":"(S/o) alam","type":"OWNER"},{"sr":37,"khewat":"136","khata":"257","khasra":"38","name":"gulam mohi uddin","parentage":"(S/o) ali","type":"OWNER"},{"sr":38,"khewat":"136","khata":"257","khasra":"38","name":"masmath salmi","parentage":"(D/o) ali","type":"OWNER"},{"sr":39,"khewat":"136","khata":"257","khasra":"38","name":"mohammadramzan","parentage":"(S/o) ali","type":"OWNER"},{"sr":40,"khewat":"136","khata":"258","khasra":"38","name":"MOHD YOUSAF","parentage":"(S/o) ghulam qadir","type":"CULTIVATOR"},{"sr":41,"khewat":"137","khata":"259","khasra":"62","name":"manzoor ahmad","parentage":"(S/o) haider","type":"BOTH"},{"sr":42,"khewat":"137","khata":"259","khasra":"62","name":"ali mohammad","parentage":"(S/o) haider","type":"OWNER"},{"sr":43,"khewat":"137","khata":"259","khasra":"62","name":"bashir ahmad","parentage":"(S/o) haider","type":"BOTH"},{"sr":44,"khewat":"137","khata":"259","khasra":"62","name":"gulam mohammad","parentage":"(S/o) haider","type":"OWNER"},{"sr":45,"khewat":"137","khata":"259","khasra":"62","name":"gulam ahmad","parentage":"(S/o) rehman","type":"OWNER"},{"sr":46,"khewat":"137","khata":"259","khasra":"62","name":"masmat khatooni","parentage":"(D/o) rehman","type":"OWNER"},{"sr":47,"khewat":"137","khata":"259","khasra":"62","name":"masmat khatji","parentage":"(D/o) rehman","type":"OWNER"},{"sr":48,"khewat":"137","khata":"259","khasra":"62","name":"mohammad ibrahim","parentage":"(S/o) abloo","type":"OWNER"},{"sr":49,"khewat":"137","khata":"259","khasra":"62","name":"gulam ahmad","parentage":"(S/o) abloo","type":"OWNER"},{"sr":50,"khewat":"137","khata":"259","khasra":"62","name":"abdul rahim","parentage":"(S/o) abloo","type":"OWNER"},{"sr":51,"khewat":"137","khata":"259","khasra":"62","name":"mohammad jafar","parentage":"(S/o) abloo","type":"OWNER"},{"sr":52,"khewat":"137","khata":"259","khasra":"62","name":"mohammad afazal","parentage":"(S/o) haider","type":"OWNER"},{"sr":53,"khewat":"137","khata":"259","khasra":"62","name":"ali mohammad","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":54,"khewat":"137","khata":"259","khasra":"62","name":"mohammad akber","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":55,"khewat":"137","khata":"259","khasra":"62","name":"gulam rasool","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":56,"khewat":"137","khata":"259","khasra":"62","name":"abdul rahim","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":57,"khewat":"137","khata":"259","khasra":"62","name":"gulam hussain","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":58,"khewat":"137","khata":"259","khasra":"62","name":"masmat raja","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":59,"khewat":"137","khata":"259","khasra":"62","name":"mohammad ishak","parentage":"(S/o) rehman","type":"OWNER"},{"sr":60,"khewat":"137","khata":"259","khasra":"62","name":"masmat sakinah","parentage":"(D/o) rehman","type":"OWNER"},{"sr":61,"khewat":"137","khata":"259","khasra":"62","name":"masmat klsumah","parentage":"(D/o) rehman","type":"OWNER"},{"sr":62,"khewat":"90","khata":"194","khasra":"54","name":"rasool","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":63,"khewat":"91","khata":"195","khasra":"15","name":"mohammad","parentage":"(S/o) shaban","type":"OWNER"},{"sr":64,"khewat":"91","khata":"195","khasra":"15","name":"hussain","parentage":"(S/o) shaban","type":"OWNER"},{"sr":65,"khewat":"91","khata":"195","khasra":"15","name":"lal","parentage":"(S/o) shaban","type":"OWNER"},{"sr":66,"khewat":"91","khata":"195","khasra":"15","name":"masmath daulati","parentage":"(D/o) shaban","type":"OWNER"},{"sr":67,"khewat":"92","khata":"196","khasra":"228","name":"jafar","parentage":"(S/o) raheem","type":"OWNER"},{"sr":68,"khewat":"92","khata":"196","khasra":"228","name":"hussain","parentage":"(S/o) raheem","type":"OWNER"},{"sr":69,"khewat":"92","khata":"196","khasra":"228","name":"masmat farzani","parentage":"(D/o) raheem","type":"OWNER"},{"sr":70,"khewat":"92","khata":"196","khasra":"228","name":"masmat kli","parentage":"(D/o) raheem","type":"OWNER"},{"sr":71,"khewat":"92","khata":"196","khasra":"228","name":"masmat khatooni","parentage":"(D/o) raheem","type":"OWNER"},{"sr":72,"khewat":"92","khata":"196","khasra":"228","name":"akber","parentage":"(S/o) jamah","type":"OWNER"},{"sr":73,"khewat":"92","khata":"196","khasra":"228","name":"mohammad ashraf","parentage":"(S/o) rehman","type":"OWNER"},{"sr":74,"khewat":"92","khata":"196","khasra":"228","name":"masmath kulsuma","parentage":"(D/o) rehman","type":"OWNER"},{"sr":75,"khewat":"92","khata":"196","khasra":"228","name":"ali mohammad","parentage":"(S/o) rehman","type":"OWNER"},{"sr":76,"khewat":"82","khata":"181","khasra":"140","name":"ghulam mohd","parentage":"(S/o) ismail","type":"CULTIVATOR"},{"sr":77,"khewat":"82","khata":"181","khasra":"140","name":"ghulam ahmed","parentage":"(S/o) ismail","type":"CULTIVATOR"},{"sr":78,"khewat":"82","khata":"180","khasra":"145","name":"gair mumkin nehr","parentage":"(Others) gair mumkin nehr","type":"CULTIVATOR"},{"sr":79,"khewat":"80","khata":"175","khasra":"33","name":"zahoor ahmed","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":80,"khewat":"80","khata":"175","khasra":"33","name":"sajad hussain","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":81,"khewat":"80","khata":"175","khasra":"33","name":"firdos ahmed","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":82,"khewat":"55","khata":"127","khasra":"131","name":"gulam mohammad","parentage":"(S/o) bakir","type":"OWNER"},{"sr":83,"khewat":"55","khata":"127","khasra":"131","name":"gulam ahmad","parentage":"(S/o) bakir","type":"OWNER"},{"sr":84,"khewat":"55","khata":"127","khasra":"131","name":"mohammad akbar","parentage":"(S/o) bakir","type":"OWNER"},{"sr":85,"khewat":"55","khata":"127","khasra":"131","name":"masmat maryam","parentage":"(W/o) bakir","type":"OWNER"},{"sr":86,"khewat":"57","khata":"130","khasra":"74","name":"gulam ahmad","parentage":"(S/o) asmal","type":"OWNER"},{"sr":87,"khewat":"57","khata":"130","khasra":"74","name":"gulam mohammad","parentage":"(S/o) ismal","type":"OWNER"},{"sr":88,"khewat":"57","khata":"130","khasra":"74","name":"Ghulam ahmed","parentage":"(S/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":89,"khewat":"57","khata":"130","khasra":"74","name":"Mohammad Abdulah","parentage":"(S/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":90,"khewat":"57","khata":"130","khasra":"74","name":"Abdul Rehman","parentage":"(S/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":91,"khewat":"57","khata":"130","khasra":"74","name":"Fatima","parentage":"(D/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":92,"khewat":"57","khata":"130","khasra":"74","name":"Zoona","parentage":"(D/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":93,"khewat":"57","khata":"130","khasra":"74","name":"Kalsuma","parentage":"(D/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":94,"khewat":"57","khata":"130","khasra":"74","name":"Khatija","parentage":"(W/o) Mohammad Jafar Bhat Sakenin Deh","type":"OWNER"},{"sr":95,"khewat":"65","khata":"147","khasra":"154","name":"masmath jani","parentage":"(D/o) haider","type":"OWNER"},{"sr":96,"khewat":"65","khata":"148","khasra":"70","name":"ahmed","parentage":"(S/o) kasim","type":"CULTIVATOR"},{"sr":97,"khewat":"68","khata":"152","khasra":"139","name":"bashir ahmad","parentage":"(S/o) bakir","type":"OWNER"},{"sr":98,"khewat":"68","khata":"152","khasra":"139","name":"zahoor ahmad","parentage":"(S/o) bakir","type":"OWNER"},{"sr":99,"khewat":"68","khata":"152","khasra":"139","name":"masma th sakina","parentage":"(D/o) bakir","type":"OWNER"},{"sr":100,"khewat":"68","khata":"152","khasra":"139","name":"masmath taja","parentage":"(D/o) bakir","type":"OWNER"},{"sr":101,"khewat":"68","khata":"152","khasra":"139","name":"masmath fhmidah","parentage":"(D/o) bakir","type":"OWNER"},{"sr":102,"khewat":"68","khata":"152","khasra":"139","name":"mohammad jafar","parentage":"(S/o) akbar","type":"OWNER"},{"sr":103,"khewat":"68","khata":"152","khasra":"139","name":"galam mohammad","parentage":"(S/o) akbar","type":"OWNER"},{"sr":104,"khewat":"68","khata":"152","khasra":"139","name":"gulam ahmad","parentage":"(S/o) akbar","type":"OWNER"},{"sr":105,"khewat":"68","khata":"152","khasra":"139","name":"masmath salma","parentage":"(D/o) akbar","type":"OWNER"},{"sr":106,"khewat":"68","khata":"152","khasra":"139","name":"masmath kulsuma","parentage":"(D/o) lasu","type":"OWNER"},{"sr":107,"khewat":"68","khata":"152","khasra":"139","name":"mohammad makbool","parentage":"(S/o) akbar","type":"OWNER"},{"sr":108,"khewat":"67","khata":"151","khasra":"106","name":"maqbooza mehkma irrigation","parentage":"(Others) maqbooza mehkma irrigation","type":"CULTIVATOR"},{"sr":109,"khewat":"78","khata":"171","khasra":"331/87","name":"masmath raja","parentage":"(D/o) juma","type":"OWNER"},{"sr":110,"khewat":"78","khata":"171","khasra":"331/87","name":"masmath fatima","parentage":"(D/o) juma","type":"OWNER"},{"sr":111,"khewat":"78","khata":"172","khasra":"330/87","name":"shagufta","parentage":"(W/o) barkat ali","type":"CULTIVATOR"},{"sr":112,"khewat":"16","khata":"51","khasra":"69","name":"gulam mohammad","parentage":"(S/o) rasool","type":"OWNER"},{"sr":113,"khewat":"16","khata":"51","khasra":"69","name":"gulam kadir","parentage":"(S/o) rasool","type":"OWNER"},{"sr":114,"khewat":"16","khata":"51","khasra":"69","name":"ali mohammad","parentage":"(S/o) rasool","type":"OWNER"},{"sr":115,"khewat":"16","khata":"51","khasra":"69","name":"masmat khatji","parentage":"(D/o) rasool","type":"OWNER"},{"sr":116,"khewat":"16","khata":"51","khasra":"69","name":"khatooni","parentage":"(W/o) rasool","type":"OWNER"},{"sr":117,"khewat":"16","khata":"51","khasra":"69","name":"masmat zoona","parentage":"(D/o) rasool","type":"OWNER"},{"sr":118,"khewat":"16","khata":"51","khasra":"69","name":"masmat fatima","parentage":"(D/o) rasool","type":"OWNER"},{"sr":119,"khewat":"16","khata":"51","khasra":"69","name":"masmat mehra","parentage":"(D/o) rasool","type":"OWNER"},{"sr":120,"khewat":"12","khata":"47","khasra":"32","name":"zahoor ahmed","parentage":"(S/o) ghulam qadir","type":"CULTIVATOR"},{"sr":121,"khewat":"13","khata":"48","khasra":"134","name":"gulam mohammad","parentage":"(S/o) parwarda haider","type":"OWNER"},{"sr":122,"khewat":"13","khata":"48","khasra":"134","name":"gulam ahmad","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":123,"khewat":"13","khata":"48","khasra":"134","name":"shabir ahmad","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":124,"khewat":"13","khata":"48","khasra":"134","name":"masmat shafika","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":125,"khewat":"13","khata":"48","khasra":"134","name":"masmat hajra","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":126,"khewat":"13","khata":"48","khasra":"134","name":"masmat raja","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":127,"khewat":"13","khata":"48","khasra":"134","name":"masmat rafika","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":128,"khewat":"13","khata":"48","khasra":"134","name":"masmat maryam","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":129,"khewat":"13","khata":"48","khasra":"134","name":"masmat zamruda","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":130,"khewat":"13","khata":"48","khasra":"134","name":"masmat jozy","parentage":"(D/o) masmat kulsooma","type":"OWNER"},{"sr":131,"khewat":"20","khata":"59","khasra":"42","name":"qasim","parentage":"(S/o) alam","type":"OWNER"},{"sr":132,"khewat":"20","khata":"59","khasra":"42","name":"abdul rehman","parentage":"(S/o) masmat salma","type":"OWNER"},{"sr":133,"khewat":"20","khata":"59","khasra":"42","name":"gulam rasool","parentage":"(S/o) masmat salma","type":"OWNER"},{"sr":134,"khewat":"20","khata":"59","khasra":"42","name":"masmat zoona","parentage":"(D/o) masmat salma","type":"OWNER"},{"sr":135,"khewat":"20","khata":"59","khasra":"42","name":"masmat kulsuma","parentage":"(D/o) masmat salma","type":"OWNER"},{"sr":136,"khewat":"26","khata":"67","khasra":"16","name":"ali","parentage":"(S/o) ramzan","type":"OWNER"},{"sr":137,"khewat":"26","khata":"67","khasra":"16","name":"masmath khatji","parentage":"(D/o) ramzan","type":"OWNER"},{"sr":138,"khewat":"26","khata":"67","khasra":"16","name":"masmath khatooni","parentage":"(D/o) ramzan","type":"OWNER"},{"sr":139,"khewat":"26","khata":"67","khasra":"16","name":"hasan","parentage":"(S/o) masmath khati","type":"OWNER"},{"sr":140,"khewat":"26","khata":"67","khasra":"16","name":"ali","parentage":"(S/o) masmath khati","type":"OWNER"},{"sr":141,"khewat":"26","khata":"67","khasra":"16","name":"hasan","parentage":"(S/o) ramzan","type":"BOTH"},{"sr":142,"khewat":"28","khata":"71","khasra":"170","name":"ali mohd","parentage":"(S/o) ghulam mohd","type":"CULTIVATOR"},{"sr":143,"khewat":"28","khata":"71","khasra":"170","name":"ashiq hussain","parentage":"(S/o) ghulam mohd","type":"CULTIVATOR"},{"sr":144,"khewat":"28","khata":"71","khasra":"170","name":"masamat fata","parentage":"(D/o) ghulam mohd","type":"CULTIVATOR"},{"sr":145,"khewat":"29","khata":"72","khasra":"201","name":"masmat zainab","parentage":"(D/o) asad","type":"OWNER"},{"sr":146,"khewat":"29","khata":"72","khasra":"201","name":"sharfi","parentage":"(W/o) asad","type":"OWNER"},{"sr":147,"khewat":"31","khata":"75","khasra":"198","name":"gulam ahmad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":148,"khewat":"31","khata":"75","khasra":"198","name":"gulam mohammad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":149,"khewat":"31","khata":"75","khasra":"198","name":"mohammad ishak","parentage":"(S/o) hasan","type":"OWNER"},{"sr":150,"khewat":"31","khata":"75","khasra":"198","name":"mohammad jafar","parentage":"(S/o) hasan","type":"OWNER"},{"sr":151,"khewat":"31","khata":"75","khasra":"198","name":"zainab","parentage":"(D/o) akber","type":"OWNER"},{"sr":152,"khewat":"31","khata":"75","khasra":"198","name":"masmat raja","parentage":"(D/o) hasan","type":"OWNER"},{"sr":153,"khewat":"31","khata":"75","khasra":"198","name":"masmat zeba","parentage":"(D/o) hasan","type":"OWNER"},{"sr":154,"khewat":"31","khata":"75","khasra":"198","name":"masmat maryam","parentage":"(D/o) hasan","type":"OWNER"},{"sr":155,"khewat":"33","khata":"77","khasra":"89","name":"masamat halima","parentage":"(D/o) akbar","type":"CULTIVATOR"},{"sr":156,"khewat":"33","khata":"77","khasra":"89","name":"masamat rafiqa","parentage":"(D/o) akbar","type":"CULTIVATOR"},{"sr":157,"khewat":"37","khata":"82","khasra":"122","name":"gulam ahmad dar","parentage":"(S/o) parwarda","type":"OWNER"},{"sr":158,"khewat":"37","khata":"82","khasra":"122","name":"masmat zooni","parentage":"(W/o) juma","type":"OWNER"},{"sr":159,"khewat":"37","khata":"84","khasra":"233","name":"irshad hussain","parentage":"(S/o) ali mohd","type":"CULTIVATOR"},{"sr":160,"khewat":"37","khata":"84","khasra":"233","name":"jawed ali","parentage":"(S/o) ali mohd","type":"CULTIVATOR"},{"sr":161,"khewat":"37","khata":"85","khasra":"233","name":"ghulam mohd","parentage":"(S/o) haji abdul rahim","type":"CULTIVATOR"},{"sr":162,"khewat":"46","khata":"108","khasra":"53","name":"ali mohd","parentage":"(S/o) asad","type":"CULTIVATOR"},{"sr":163,"khewat":"46","khata":"110","khasra":"53","name":"ghulam hussain","parentage":"(S/o) mehdi","type":"CULTIVATOR"},{"sr":164,"khewat":"47","khata":"111","khasra":"47","name":"ashraf","parentage":"(S/o) asgar","type":"OWNER"},{"sr":165,"khewat":"47","khata":"111","khasra":"47","name":"rasool","parentage":"(S/o) asgar","type":"OWNER"},{"sr":166,"khewat":"47","khata":"111","khasra":"47","name":"masmat hajra","parentage":"(D/o) asgar","type":"OWNER"},{"sr":167,"khewat":"47","khata":"111","khasra":"47","name":"musmata zainab","parentage":"(W/o) asgar","type":"OWNER"},{"sr":168,"khewat":"47","khata":"111","khasra":"47","name":"bashir ahmed","parentage":"(S/o) safi","type":"OWNER"},{"sr":169,"khewat":"47","khata":"111","khasra":"47","name":"posha","parentage":"(D/o) safi","type":"OWNER"},{"sr":170,"khewat":"47","khata":"111","khasra":"47","name":"kalsuma","parentage":"(D/o) safi","type":"OWNER"},{"sr":171,"khewat":"47","khata":"111","khasra":"47","name":"jana","parentage":"(D/o) safi","type":"OWNER"},{"sr":172,"khewat":"28","khata":"70","khasra":"252","name":"mohammad","parentage":"(S/o) sabir","type":"OWNER"},{"sr":173,"khewat":"148","khata":"278","khasra":"9","name":"shamboo nath","parentage":"(S/o) surajram","type":"OWNER"},{"sr":174,"khewat":"139","khata":"261","khasra":"42","name":"abdulrehman","parentage":"(S/o) masmat salma","type":"OWNER"},{"sr":175,"khewat":"6","khata":"9","khasra":"116","name":"jafar","parentage":"(S/o) ismal","type":"CULTIVATOR"},{"sr":176,"khewat":"6","khata":"9","khasra":"116","name":"ahmad","parentage":"(S/o) ismal","type":"CULTIVATOR"},{"sr":177,"khewat":"6","khata":"9","khasra":"116","name":"ghulam mohd","parentage":"(S/o) ismal","type":"CULTIVATOR"},{"sr":178,"khewat":"8","khata":"22","khasra":"24","name":"hasan","parentage":"(S/o) jafar","type":"OWNER"},{"sr":179,"khewat":"8","khata":"22","khasra":"24","name":"kadir","parentage":"(S/o) jafar","type":"OWNER"},{"sr":180,"khewat":"8","khata":"22","khasra":"24","name":"ali mohammad","parentage":"(S/o) juma","type":"OWNER"},{"sr":181,"khewat":"8","khata":"22","khasra":"24","name":"sannawalla","parentage":"(S/o) rehman","type":"OWNER"},{"sr":182,"khewat":"8","khata":"22","khasra":"24","name":"bakir","parentage":"(S/o) jafar","type":"OWNER"},{"sr":183,"khewat":"8","khata":"22","khasra":"24","name":"manzoor","parentage":"(S/o) jafar","type":"OWNER"},{"sr":184,"khewat":"8","khata":"22","khasra":"24","name":"masmath khatji","parentage":"(D/o) jafar","type":"OWNER"},{"sr":185,"khewat":"8","khata":"22","khasra":"24","name":"ishfak hussain","parentage":"(S/o) gulam","type":"OWNER"},{"sr":186,"khewat":"8","khata":"22","khasra":"24","name":"tanvir hussain","parentage":"(S/o) gulam","type":"OWNER"},{"sr":187,"khewat":"8","khata":"22","khasra":"24","name":"masmat sabika","parentage":"(D/o) gulam","type":"OWNER"},{"sr":188,"khewat":"8","khata":"22","khasra":"24","name":"abdullah","parentage":"(S/o) akli","type":"OWNER"},{"sr":189,"khewat":"8","khata":"22","khasra":"24","name":"nizar ahmad","parentage":"(S/o) akli","type":"OWNER"},{"sr":190,"khewat":"8","khata":"22","khasra":"24","name":"masmat fatima","parentage":"(D/o) akli","type":"OWNER"},{"sr":191,"khewat":"8","khata":"22","khasra":"24","name":"masmat hajra","parentage":"(D/o) akli","type":"OWNER"},{"sr":192,"khewat":"8","khata":"22","khasra":"24","name":"masmat jana","parentage":"(D/o) juma","type":"OWNER"},{"sr":193,"khewat":"8","khata":"22","khasra":"24","name":"masmat klsumah","parentage":"(D/o) juma","type":"OWNER"},{"sr":194,"khewat":"8","khata":"22","khasra":"24","name":"masmat mughli","parentage":"(D/o) juma","type":"OWNER"},{"sr":195,"khewat":"8","khata":"22","khasra":"24","name":"mohammad qasim","parentage":"(S/o) mohammad ibrahim","type":"OWNER"},{"sr":196,"khewat":"8","khata":"22","khasra":"24","name":"arshad ahmad","parentage":"(S/o) mohammad ibrahim","type":"OWNER"},{"sr":197,"khewat":"8","khata":"22","khasra":"24","name":"farvez ali","parentage":"(S/o) mohammad ibrahim","type":"OWNER"},{"sr":198,"khewat":"8","khata":"22","khasra":"24","name":"masmat halima","parentage":"(D/o) mohammad ibrahim","type":"OWNER"},{"sr":199,"khewat":"8","khata":"22","khasra":"24","name":"masmat mima","parentage":"(D/o) mohammad ibrahim","type":"OWNER"},{"sr":200,"khewat":"8","khata":"22","khasra":"24","name":"masmat farida","parentage":"(D/o) mohammad ibrahim","type":"OWNER"},{"sr":201,"khewat":"8","khata":"22","khasra":"24","name":"masamat afroza","parentage":"(D/o) mohammad ibrahim","type":"OWNER"},{"sr":202,"khewat":"8","khata":"22","khasra":"24","name":"masmat mahmoodah","parentage":"(D/o) mohammad ibrahim","type":"OWNER"},{"sr":203,"khewat":"8","khata":"22","khasra":"24","name":"shokat ali","parentage":"(S/o) masmat feeza","type":"OWNER"},{"sr":204,"khewat":"8","khata":"22","khasra":"24","name":"ali mohammad","parentage":"(S/o) masmat feeza","type":"OWNER"},{"sr":205,"khewat":"8","khata":"22","khasra":"24","name":"masmat gulshan","parentage":"(D/o) masmat feeza","type":"OWNER"},{"sr":206,"khewat":"14","khata":"49","khasra":"66","name":"mohammad abdullah","parentage":"(S/o) ahmad","type":"BOTH"},{"sr":207,"khewat":"14","khata":"49","khasra":"66","name":"bashir ahmad","parentage":"(S/o) ramzan","type":"BOTH"},{"sr":208,"khewat":"14","khata":"49","khasra":"66","name":"mohammad akbar","parentage":"(S/o) ramzan","type":"OWNER"},{"sr":209,"khewat":"14","khata":"49","khasra":"66","name":"jafar","parentage":"(S/o) ahmad","type":"BOTH"},{"sr":210,"khewat":"14","khata":"49","khasra":"66","name":"masmat maryam","parentage":"(D/o) ramzan","type":"OWNER"},{"sr":211,"khewat":"15","khata":"50","khasra":"75","name":"abdulrahim","parentage":"(S/o) hasan","type":"OWNER"},{"sr":212,"khewat":"15","khata":"50","khasra":"75","name":"mohammad yaqub","parentage":"(S/o) hasan","type":"OWNER"},{"sr":213,"khewat":"17","khata":"52","khasra":"97","name":"rehman","parentage":"(S/o) asad","type":"BOTH"},{"sr":214,"khewat":"17","khata":"52","khasra":"97","name":"gulam ahmad","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":215,"khewat":"17","khata":"52","khasra":"97","name":"shabir ahmad","parentage":"(S/o) masmat klsumah","type":"OWNER"},{"sr":216,"khewat":"17","khata":"52","khasra":"97","name":"masmat shafika","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":217,"khewat":"17","khata":"52","khasra":"97","name":"masmat hajra","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":218,"khewat":"17","khata":"52","khasra":"97","name":"masmat rafika","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":219,"khewat":"17","khata":"52","khasra":"97","name":"masmat maryam","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":220,"khewat":"17","khata":"52","khasra":"97","name":"masmat zamrud","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":221,"khewat":"17","khata":"52","khasra":"97","name":"masmat jozy","parentage":"(D/o) masmat klsumah","type":"OWNER"},{"sr":222,"khewat":"24","khata":"63","khasra":"135","name":"musammat zainab","parentage":"(W/o) hasan","type":"OWNER"},{"sr":223,"khewat":"32","khata":"76","khasra":"247","name":"masmat raja","parentage":"(D/o) rehman","type":"OWNER"},{"sr":224,"khewat":"32","khata":"76","khasra":"247","name":"masmat zooni","parentage":"(W/o) ali","type":"OWNER"},{"sr":225,"khewat":"32","khata":"76","khasra":"247","name":"ishak","parentage":"(S/o) rehman","type":"OWNER"},{"sr":226,"khewat":"32","khata":"76","khasra":"247","name":"masmat fatima","parentage":"(D/o) rehman","type":"OWNER"},{"sr":227,"khewat":"32","khata":"76","khasra":"247","name":"masmat kulsuma","parentage":"(D/o) rehman","type":"OWNER"},{"sr":228,"khewat":"32","khata":"76","khasra":"247","name":"masmat fatima","parentage":"(D/o) ali","type":"OWNER"},{"sr":229,"khewat":"32","khata":"76","khasra":"247","name":"masmat khatji","parentage":"(D/o) ali","type":"OWNER"},{"sr":230,"khewat":"34","khata":"78","khasra":"205","name":"masmat jani","parentage":"(D/o) lal","type":"OWNER"},{"sr":231,"khewat":"34","khata":"78","khasra":"205","name":"masmat sakina","parentage":"(D/o) lal","type":"OWNER"},{"sr":232,"khewat":"35","khata":"79","khasra":"50","name":"masmat azizi","parentage":"(D/o) jawad","type":"OWNER"},{"sr":233,"khewat":"35","khata":"79","khasra":"50","name":"masmat fazeel","parentage":"(D/o) jawad","type":"OWNER"},{"sr":234,"khewat":"35","khata":"79","khasra":"50","name":"hasan","parentage":"(S/o) raheem","type":"OWNER"},{"sr":235,"khewat":"35","khata":"79","khasra":"50","name":"gulam mohammad","parentage":"(S/o) raheem","type":"OWNER"},{"sr":236,"khewat":"35","khata":"79","khasra":"50","name":"mohammad jamal","parentage":"(S/o) raheem","type":"OWNER"},{"sr":237,"khewat":"35","khata":"79","khasra":"50","name":"masmat khati","parentage":"(D/o) raheem","type":"OWNER"},{"sr":238,"khewat":"35","khata":"79","khasra":"50","name":"masmat bega","parentage":"(D/o) raheem","type":"OWNER"},{"sr":239,"khewat":"35","khata":"79","khasra":"50","name":"masmat daulati","parentage":"(D/o) raheem","type":"OWNER"},{"sr":240,"khewat":"35","khata":"79","khasra":"50","name":"masmat bi bi","parentage":"(D/o) raheem","type":"OWNER"},{"sr":241,"khewat":"35","khata":"79","khasra":"50","name":"masmat rahmi","parentage":"(D/o) raheem","type":"OWNER"},{"sr":242,"khewat":"35","khata":"79","khasra":"50","name":"gulam mohammad","parentage":"(S/o) abbli","type":"OWNER"},{"sr":243,"khewat":"35","khata":"79","khasra":"50","name":"bakir ali","parentage":"(S/o) abbli","type":"OWNER"},{"sr":244,"khewat":"35","khata":"79","khasra":"50","name":"masmat kalsoom","parentage":"(D/o) abbli","type":"OWNER"},{"sr":245,"khewat":"35","khata":"79","khasra":"50","name":"masmat maryam","parentage":"(D/o) abbli","type":"OWNER"},{"sr":246,"khewat":"39","khata":"92","khasra":"362/243","name":"sarkar","parentage":"(Others) sarkar","type":"OWNER"},{"sr":247,"khewat":"40","khata":"93","khasra":"102","name":"hafeez ulla","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":248,"khewat":"40","khata":"93","khasra":"102","name":"bashir ahmad","parentage":"(S/o) ali","type":"OWNER"},{"sr":249,"khewat":"40","khata":"93","khasra":"102","name":"bashir ahmad","parentage":"(S/o) rasool","type":"OWNER"},{"sr":250,"khewat":"40","khata":"93","khasra":"102","name":"hasan","parentage":"(S/o) rasool","type":"BOTH"},{"sr":251,"khewat":"40","khata":"93","khasra":"102","name":"yousuf","parentage":"(S/o) rasool","type":"OWNER"},{"sr":252,"khewat":"40","khata":"93","khasra":"102","name":"mahda","parentage":"(S/o) rasool","type":"OWNER"},{"sr":253,"khewat":"40","khata":"93","khasra":"102","name":"gulam ahmaddar","parentage":"(S/o) parwarda","type":"OWNER"},{"sr":254,"khewat":"40","khata":"93","khasra":"102","name":"masmat boba","parentage":"(D/o) rasool","type":"OWNER"},{"sr":255,"khewat":"40","khata":"93","khasra":"102","name":"masmat zubeida","parentage":"(D/o) rasool","type":"OWNER"},{"sr":256,"khewat":"40","khata":"93","khasra":"102","name":"masmat shami","parentage":"(W/o) rasool","type":"OWNER"},{"sr":257,"khewat":"40","khata":"93","khasra":"102","name":"gulzar","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":258,"khewat":"40","khata":"93","khasra":"102","name":"showkat ali","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":259,"khewat":"40","khata":"93","khasra":"102","name":"masmat hameeda","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":260,"khewat":"40","khata":"93","khasra":"102","name":"latif ahmad","parentage":"(S/o) ali","type":"OWNER"},{"sr":261,"khewat":"40","khata":"93","khasra":"102","name":"masmat misarah","parentage":"(D/o) ali","type":"OWNER"},{"sr":262,"khewat":"40","khata":"93","khasra":"102","name":"masmat hajra","parentage":"(D/o) ali","type":"OWNER"},{"sr":263,"khewat":"40","khata":"93","khasra":"102","name":"masmat khatooni","parentage":"(D/o) hasan","type":"OWNER"},{"sr":264,"khewat":"41","khata":"94","khasra":"65","name":"juma","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":265,"khewat":"41","khata":"94","khasra":"65","name":"ahmad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":266,"khewat":"41","khata":"94","khasra":"65","name":"masmat mehbooba","parentage":"(D/o) rasool","type":"OWNER"},{"sr":267,"khewat":"41","khata":"94","khasra":"65","name":"ali","parentage":"(S/o) hasan","type":"OWNER"},{"sr":268,"khewat":"41","khata":"94","khasra":"65","name":"masmat khatji","parentage":"(D/o) masmat farzani","type":"OWNER"},{"sr":269,"khewat":"44","khata":"105","khasra":"86","name":"masmat janni","parentage":"(W/o) abbli","type":"OWNER"},{"sr":270,"khewat":"45","khata":"106","khasra":"124","name":"ramzan","parentage":"(S/o) qasim","type":"OWNER"},{"sr":271,"khewat":"45","khata":"106","khasra":"124","name":"mohammad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":272,"khewat":"45","khata":"106","khasra":"124","name":"mahda","parentage":"(S/o) hasan","type":"OWNER"},{"sr":273,"khewat":"45","khata":"106","khasra":"124","name":"asad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":274,"khewat":"45","khata":"106","khasra":"124","name":"abloo","parentage":"(S/o) qasim","type":"OWNER"},{"sr":275,"khewat":"45","khata":"106","khasra":"124","name":"masmat sakina","parentage":"(D/o) qasim","type":"OWNER"},{"sr":276,"khewat":"45","khata":"106","khasra":"124","name":"masmat bega","parentage":"(D/o) qasim","type":"OWNER"},{"sr":277,"khewat":"45","khata":"106","khasra":"124","name":"akber","parentage":"(S/o) hasan","type":"OWNER"},{"sr":278,"khewat":"45","khata":"106","khasra":"124","name":"masmat rahmi","parentage":"(D/o) hasan","type":"OWNER"},{"sr":279,"khewat":"45","khata":"106","khasra":"124","name":"masmat fata","parentage":"(D/o) hasan","type":"OWNER"},{"sr":280,"khewat":"45","khata":"106","khasra":"124","name":"masmat khatji","parentage":"(D/o) hasan","type":"OWNER"},{"sr":281,"khewat":"48","khata":"113","khasra":"28","name":"gulam","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":282,"khewat":"48","khata":"113","khasra":"28","name":"ahmad","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":283,"khewat":"48","khata":"113","khasra":"28","name":"haider","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":284,"khewat":"48","khata":"113","khasra":"28","name":"hasan","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":285,"khewat":"48","khata":"113","khasra":"28","name":"rehman","parentage":"(S/o) masmat khatji","type":"OWNER"},{"sr":286,"khewat":"48","khata":"113","khasra":"28","name":"masmat rahmi","parentage":"(D/o) masmat fazeel","type":"OWNER"},{"sr":287,"khewat":"48","khata":"113","khasra":"28","name":"raheem","parentage":"(S/o) bakir","type":"OWNER"},{"sr":288,"khewat":"48","khata":"113","khasra":"28","name":"kadir","parentage":"(S/o) bakir","type":"OWNER"},{"sr":289,"khewat":"48","khata":"113","khasra":"28","name":"masmat zooni","parentage":"(D/o) bakir","type":"OWNER"},{"sr":290,"khewat":"48","khata":"113","khasra":"28","name":"masmat raja","parentage":"(D/o) bakir","type":"OWNER"},{"sr":291,"khewat":"48","khata":"113","khasra":"28","name":"fayaz ahmad","parentage":"(S/o) asghar","type":"OWNER"},{"sr":292,"khewat":"48","khata":"113","khasra":"28","name":"masmat mehboob","parentage":"(D/o) asghar","type":"OWNER"},{"sr":293,"khewat":"48","khata":"113","khasra":"28","name":"masmat shafika","parentage":"(D/o) asghar","type":"OWNER"},{"sr":294,"khewat":"48","khata":"113","khasra":"28","name":"masmat mehri","parentage":"(W/o) asghar","type":"OWNER"},{"sr":295,"khewat":"48","khata":"113","khasra":"28","name":"masmat kulsuma","parentage":"(D/o) masmat khatji","type":"OWNER"},{"sr":296,"khewat":"48","khata":"113","khasra":"28","name":"mohammad yakoob","parentage":"(S/o) masmat fazeel","type":"OWNER"},{"sr":297,"khewat":"48","khata":"113","khasra":"28","name":"abdul raheem","parentage":"(S/o) masmat fazeel","type":"OWNER"},{"sr":298,"khewat":"48","khata":"113","khasra":"28","name":"masmat jana","parentage":"(D/o) masmat fazeel","type":"OWNER"},{"sr":299,"khewat":"48","khata":"113","khasra":"28","name":"ali","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":300,"khewat":"49","khata":"114","khasra":"177","name":"mohammad","parentage":"(S/o) qasim","type":"OWNER"},{"sr":301,"khewat":"49","khata":"114","khasra":"177","name":"ahmad","parentage":"(S/o) raheem","type":"OWNER"},{"sr":302,"khewat":"49","khata":"114","khasra":"177","name":"hasan","parentage":"(S/o) talib","type":"OWNER"},{"sr":303,"khewat":"49","khata":"114","khasra":"177","name":"mohsin","parentage":"(S/o) talib","type":"OWNER"},{"sr":304,"khewat":"49","khata":"114","khasra":"177","name":"hussain","parentage":"(S/o) talib","type":"OWNER"},{"sr":305,"khewat":"49","khata":"114","khasra":"177","name":"ibrahim","parentage":"(S/o) talib","type":"OWNER"},{"sr":306,"khewat":"49","khata":"114","khasra":"177","name":"masmat mughli","parentage":"(D/o) talib","type":"OWNER"},{"sr":307,"khewat":"49","khata":"114","khasra":"177","name":"masmat zeba","parentage":"(D/o) qasim","type":"OWNER"},{"sr":308,"khewat":"49","khata":"114","khasra":"177","name":"asad","parentage":"(S/o) qasim","type":"OWNER"},{"sr":309,"khewat":"50","khata":"115","khasra":"27","name":"yousuf","parentage":"(S/o) asad","type":"OWNER"},{"sr":310,"khewat":"50","khata":"115","khasra":"27","name":"hasan","parentage":"(S/o) asad","type":"OWNER"},{"sr":311,"khewat":"50","khata":"115","khasra":"27","name":"masmat jana","parentage":"(D/o) asad","type":"OWNER"},{"sr":312,"khewat":"50","khata":"115","khasra":"27","name":"riaz","parentage":"(S/o) asad","type":"OWNER"},{"sr":313,"khewat":"50","khata":"115","khasra":"27","name":"masmat kulsuma","parentage":"(D/o) asad","type":"OWNER"},{"sr":314,"khewat":"50","khata":"115","khasra":"27","name":"masmat khatooni","parentage":"(D/o) asad","type":"OWNER"},{"sr":315,"khewat":"50","khata":"115","khasra":"27","name":"masmat zooni","parentage":"(D/o) asad","type":"OWNER"},{"sr":316,"khewat":"50","khata":"115","khasra":"27","name":"masmat maryam","parentage":"(D/o) asad","type":"OWNER"},{"sr":317,"khewat":"50","khata":"115","khasra":"27","name":"masmat mughli","parentage":"(W/o) asad","type":"OWNER"},{"sr":318,"khewat":"50","khata":"115","khasra":"27","name":"masmat daulati","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":319,"khewat":"50","khata":"115","khasra":"27","name":"abid","parentage":"(S/o) raheem","type":"OWNER"},{"sr":320,"khewat":"50","khata":"115","khasra":"27","name":"rasool","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":321,"khewat":"52","khata":"118","khasra":"176","name":"hasan","parentage":"(S/o) kazim","type":"OWNER"},{"sr":322,"khewat":"52","khata":"118","khasra":"176","name":"hussain","parentage":"(S/o) kazim","type":"OWNER"},{"sr":323,"khewat":"52","khata":"118","khasra":"176","name":"masmath zeba","parentage":"(D/o) kazim","type":"OWNER"},{"sr":324,"khewat":"52","khata":"118","khasra":"176","name":"gulam","parentage":"(S/o) jafar","type":"OWNER"},{"sr":325,"khewat":"52","khata":"118","khasra":"176","name":"masmat zooni","parentage":"(D/o) jafar","type":"OWNER"},{"sr":326,"khewat":"52","khata":"118","khasra":"176","name":"masmat kulsuma","parentage":"(D/o) lal","type":"OWNER"},{"sr":327,"khewat":"58","khata":"131","khasra":"158","name":"rehman","parentage":"(S/o) hussain","type":"OWNER"},{"sr":328,"khewat":"58","khata":"131","khasra":"158","name":"gulam hasan","parentage":"(S/o) raheem","type":"OWNER"},{"sr":329,"khewat":"58","khata":"131","khasra":"158","name":"masmat fatima","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":330,"khewat":"58","khata":"131","khasra":"158","name":"masmat raja","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":331,"khewat":"58","khata":"131","khasra":"158","name":"gulam rasool","parentage":"(S/o) abli","type":"OWNER"},{"sr":332,"khewat":"58","khata":"131","khasra":"158","name":"abdulrahman","parentage":"(S/o) abli","type":"OWNER"},{"sr":333,"khewat":"58","khata":"131","khasra":"158","name":"jafar","parentage":"(S/o) qasim","type":"OWNER"},{"sr":334,"khewat":"58","khata":"131","khasra":"158","name":"mohammad bakir","parentage":"(S/o) hasan","type":"OWNER"},{"sr":335,"khewat":"58","khata":"131","khasra":"158","name":"bashir ahmad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":336,"khewat":"58","khata":"131","khasra":"158","name":"ali mohammad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":337,"khewat":"58","khata":"131","khasra":"158","name":"gulzar ahmad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":338,"khewat":"58","khata":"131","khasra":"158","name":"masmat fatima","parentage":"(W/o) hasan","type":"OWNER"},{"sr":339,"khewat":"58","khata":"131","khasra":"158","name":"mehad","parentage":"(S/o) hussain","type":"OWNER"},{"sr":340,"khewat":"58","khata":"131","khasra":"158","name":"masmat azizi","parentage":"(W/o) hussain","type":"OWNER"},{"sr":341,"khewat":"58","khata":"131","khasra":"158","name":"gulam haider","parentage":"(S/o) raheem","type":"OWNER"},{"sr":342,"khewat":"58","khata":"131","khasra":"158","name":"masmat maryam","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":343,"khewat":"58","khata":"131","khasra":"158","name":"masmat zoona","parentage":"(D/o) abli","type":"OWNER"},{"sr":344,"khewat":"58","khata":"131","khasra":"158","name":"masmat klsumah","parentage":"(D/o) abli","type":"OWNER"},{"sr":345,"khewat":"58","khata":"131","khasra":"158","name":"ahmad","parentage":"(S/o) bakir","type":"OWNER"},{"sr":346,"khewat":"58","khata":"131","khasra":"158","name":"mustamsikmasaat zoona","parentage":"(D/o) hasan","type":"OWNER"},{"sr":347,"khewat":"81","khata":"176","khasra":"191","name":"hussain","parentage":"(S/o) ali","type":"OWNER"},{"sr":348,"khewat":"81","khata":"178","khasra":"151","name":"mohd bakir","parentage":"(S/o) hussain","type":"CULTIVATOR"},{"sr":349,"khewat":"81","khata":"178","khasra":"151","name":"bashir ahmed","parentage":"(S/o) hussain","type":"CULTIVATOR"},{"sr":350,"khewat":"81","khata":"178","khasra":"151","name":"ali mohd","parentage":"(S/o) hussain","type":"CULTIVATOR"},{"sr":351,"khewat":"81","khata":"178","khasra":"151","name":"gulzar ahmed","parentage":"(S/o) hussain","type":"CULTIVATOR"},{"sr":352,"khewat":"89","khata":"191","khasra":"121","name":"sultan","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":353,"khewat":"89","khata":"191","khasra":"121","name":"ramzan","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":354,"khewat":"89","khata":"192","khasra":"85","name":"ghulam mohi din","parentage":"(S/o) abdullah","type":"CULTIVATOR"},{"sr":355,"khewat":"93","khata":"197","khasra":"169","name":"shaban","parentage":"(S/o) hasan","type":"OWNER"},{"sr":356,"khewat":"93","khata":"197","khasra":"169","name":"ali","parentage":"(S/o) raheem","type":"OWNER"},{"sr":357,"khewat":"93","khata":"197","khasra":"169","name":"jafar","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":358,"khewat":"93","khata":"197","khasra":"169","name":"raheem","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":359,"khewat":"93","khata":"197","khasra":"169","name":"asghar","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":360,"khewat":"93","khata":"197","khasra":"169","name":"gulam","parentage":"(S/o) bakir","type":"OWNER"},{"sr":361,"khewat":"93","khata":"197","khasra":"169","name":"masmat maryam","parentage":"(D/o) bakir","type":"OWNER"},{"sr":362,"khewat":"93","khata":"197","khasra":"169","name":"masmat shafika","parentage":"(D/o) bakir","type":"OWNER"},{"sr":363,"khewat":"93","khata":"197","khasra":"169","name":"rasool","parentage":"(S/o) hasan","type":"OWNER"},{"sr":364,"khewat":"93","khata":"197","khasra":"169","name":"mohammad akber","parentage":"(S/o) raheem","type":"OWNER"},{"sr":365,"khewat":"93","khata":"197","khasra":"169","name":"ishak","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":366,"khewat":"93","khata":"197","khasra":"169","name":"rehman","parentage":"(S/o) abbli","type":"OWNER"},{"sr":367,"khewat":"93","khata":"197","khasra":"169","name":"masmat fatima","parentage":"(W/o) abbli","type":"OWNER"},{"sr":368,"khewat":"94","khata":"198","khasra":"184","name":"masmat azizi","parentage":"(D/o) rasool","type":"OWNER"},{"sr":369,"khewat":"94","khata":"198","khasra":"184","name":"ismail","parentage":"(S/o) khurshi","type":"OWNER"},{"sr":370,"khewat":"94","khata":"198","khasra":"184","name":"akber","parentage":"(S/o) khurshi","type":"OWNER"},{"sr":371,"khewat":"96","khata":"201","khasra":"8","name":"lassa","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":372,"khewat":"97","khata":"202","khasra":"313/51","name":"gaffar","parentage":"(S/o) gula","type":"OWNER"},{"sr":373,"khewat":"98","khata":"206","khasra":"117","name":"akber","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":374,"khewat":"98","khata":"206","khasra":"117","name":"masmath khatji","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":375,"khewat":"98","khata":"206","khasra":"117","name":"masmath khizri","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":376,"khewat":"98","khata":"206","khasra":"117","name":"masmath maryam","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":377,"khewat":"98","khata":"206","khasra":"117","name":"masmath klsumah","parentage":"(W/o) mohammad","type":"OWNER"},{"sr":378,"khewat":"100","khata":"209","khasra":"6","name":"gulzar ahmed","parentage":"(S/o) ghulam ahmed","type":"CULTIVATOR"},{"sr":379,"khewat":"100","khata":"209","khasra":"6","name":"bashir ahmed","parentage":"(S/o) ghulam ahmed","type":"CULTIVATOR"},{"sr":380,"khewat":"101","khata":"210","khasra":"270/5","name":"siknadar","parentage":"(S/o) rehman","type":"OWNER"},{"sr":381,"khewat":"101","khata":"210","khasra":"270/5","name":"makbool","parentage":"(S/o) rehman","type":"OWNER"},{"sr":382,"khewat":"101","khata":"210","khasra":"270/5","name":"abdullah","parentage":"(S/o) khira","type":"OWNER"},{"sr":383,"khewat":"101","khata":"210","khasra":"270/5","name":"mohammad","parentage":"(S/o) khira","type":"OWNER"},{"sr":384,"khewat":"104","khata":"220","khasra":"274/259","name":"ibrahim","parentage":"(S/o) asad","type":"OWNER"},{"sr":385,"khewat":"106","khata":"223","khasra":"3","name":"subhan","parentage":"(S/o) mehdi","type":"OWNER"},{"sr":386,"khewat":"106","khata":"223","khasra":"3","name":"hussain","parentage":"(S/o) mehdi","type":"OWNER"},{"sr":387,"khewat":"106","khata":"223","khasra":"3","name":"safur","parentage":"(S/o) hasan","type":"OWNER"},{"sr":388,"khewat":"107","khata":"224","khasra":"55","name":"mohammad akber","parentage":"(S/o) ramzan","type":"OWNER"},{"sr":389,"khewat":"108","khata":"225","khasra":"4","name":"ali","parentage":"(S/o) hussain","type":"OWNER"},{"sr":390,"khewat":"111","khata":"228","khasra":"231","name":"abdulrehman","parentage":"(S/o) abdullah","type":"OWNER"},{"sr":391,"khewat":"111","khata":"228","khasra":"231","name":"gulam rasool","parentage":"(S/o) abdullah","type":"OWNER"},{"sr":392,"khewat":"112","khata":"229","khasra":"120","name":"qasim","parentage":"(S/o) mahda","type":"OWNER"},{"sr":393,"khewat":"113","khata":"230","khasra":"117","name":"mohammad","parentage":"(S/o) zaman","type":"OWNER"},{"sr":394,"khewat":"114","khata":"231","khasra":"85","name":"shaban","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":395,"khewat":"115","khata":"232","khasra":"229","name":"ramzan","parentage":"(S/o) ahmad","type":"BOTH"},{"sr":396,"khewat":"115","khata":"232","khasra":"229","name":"abli","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":397,"khewat":"116","khata":"233","khasra":"60","name":"gulam hasan","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":398,"khewat":"117","khata":"234","khasra":"2","name":"ali mohammad","parentage":"(S/o) ramzan","type":"OWNER"},{"sr":399,"khewat":"118","khata":"235","khasra":"67","name":"mohammad","parentage":"(S/o) sultan","type":"OWNER"},{"sr":400,"khewat":"118","khata":"235","khasra":"67","name":"abbli","parentage":"(S/o) sultan","type":"OWNER"},{"sr":401,"khewat":"120","khata":"237","khasra":"39","name":"ghulam ahmed","parentage":"(S/o) mohd","type":"CULTIVATOR"},{"sr":402,"khewat":"120","khata":"237","khasra":"39","name":"ali mohd","parentage":"(S/o) mohd","type":"CULTIVATOR"},{"sr":403,"khewat":"121","khata":"238","khasra":"43","name":"gulam rasool","parentage":"(S/o) asad","type":"OWNER"},{"sr":404,"khewat":"121","khata":"238","khasra":"43","name":"ali","parentage":"(S/o) asad","type":"OWNER"},{"sr":405,"khewat":"121","khata":"238","khasra":"43","name":"makbool","parentage":"(S/o) asad","type":"OWNER"},{"sr":406,"khewat":"121","khata":"238","khasra":"43","name":"abdulrashid","parentage":"(S/o) asad","type":"OWNER"},{"sr":407,"khewat":"121","khata":"238","khasra":"43","name":"ablu","parentage":"(S/o) asad","type":"OWNER"},{"sr":408,"khewat":"122","khata":"239","khasra":"48","name":"gulam mohammad","parentage":"(S/o) qasim","type":"OWNER"},{"sr":409,"khewat":"122","khata":"239","khasra":"48","name":"shaukat ahmad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":410,"khewat":"122","khata":"239","khasra":"48","name":"mohammad ibrahim","parentage":"(S/o) asad","type":"OWNER"},{"sr":411,"khewat":"122","khata":"239","khasra":"48","name":"ali mohammad","parentage":"(S/o) asad","type":"OWNER"},{"sr":412,"khewat":"122","khata":"239","khasra":"48","name":"gulam mohammad","parentage":"(S/o) asad","type":"OWNER"},{"sr":413,"khewat":"122","khata":"239","khasra":"48","name":"mohammad makbool","parentage":"(S/o) asad","type":"OWNER"},{"sr":414,"khewat":"122","khata":"239","khasra":"48","name":"abdullah","parentage":"(S/o) asad","type":"OWNER"},{"sr":415,"khewat":"122","khata":"239","khasra":"48","name":"gulam mohammad","parentage":"(S/o) fata","type":"OWNER"},{"sr":416,"khewat":"122","khata":"239","khasra":"48","name":"ali mohammad","parentage":"(S/o) fata","type":"OWNER"},{"sr":417,"khewat":"122","khata":"239","khasra":"48","name":"masmath raja","parentage":"(D/o) masmath fazeel","type":"OWNER"},{"sr":418,"khewat":"122","khata":"239","khasra":"48","name":"mohammad yousuf","parentage":"(S/o) mahda","type":"OWNER"},{"sr":419,"khewat":"122","khata":"239","khasra":"48","name":"gulzar ahmad","parentage":"(S/o) qasim","type":"OWNER"},{"sr":420,"khewat":"122","khata":"239","khasra":"48","name":"ashik hsin","parentage":"(S/o) qasim","type":"OWNER"},{"sr":421,"khewat":"122","khata":"239","khasra":"48","name":"masmath zamrud","parentage":"(D/o) qasim","type":"OWNER"},{"sr":422,"khewat":"122","khata":"239","khasra":"48","name":"masmath mahmoodah","parentage":"(D/o) qasim","type":"OWNER"},{"sr":423,"khewat":"122","khata":"239","khasra":"48","name":"masmath daulati","parentage":"(W/o) qasim","type":"OWNER"},{"sr":424,"khewat":"122","khata":"239","khasra":"48","name":"mehboob hsin","parentage":"(S/o) hasan","type":"OWNER"},{"sr":425,"khewat":"122","khata":"239","khasra":"48","name":"zaakir hussain","parentage":"(S/o) hasan","type":"OWNER"},{"sr":426,"khewat":"122","khata":"239","khasra":"48","name":"basharat hussain","parentage":"(S/o) hasan","type":"OWNER"},{"sr":427,"khewat":"122","khata":"239","khasra":"48","name":"masmath posha","parentage":"(D/o) hasan","type":"OWNER"},{"sr":428,"khewat":"122","khata":"239","khasra":"48","name":"masmath suhaib layeeqa","parentage":"(D/o) hasan","type":"OWNER"},{"sr":429,"khewat":"122","khata":"239","khasra":"48","name":"mohammadafazal","parentage":"(S/o) asad","type":"OWNER"},{"sr":430,"khewat":"122","khata":"239","khasra":"48","name":"masmath zeba","parentage":"(D/o) asad","type":"OWNER"},{"sr":431,"khewat":"122","khata":"239","khasra":"48","name":"masmath jali","parentage":"(D/o) asad","type":"OWNER"},{"sr":432,"khewat":"122","khata":"239","khasra":"48","name":"masmath khatji","parentage":"(D/o) fata","type":"OWNER"},{"sr":433,"khewat":"122","khata":"239","khasra":"48","name":"masmath zoona","parentage":"(D/o) fata","type":"OWNER"},{"sr":434,"khewat":"122","khata":"239","khasra":"48","name":"masmath jali","parentage":"(D/o) fata","type":"OWNER"},{"sr":435,"khewat":"122","khata":"239","khasra":"48","name":"mohammad afazal","parentage":"(S/o) masmath fazeel","type":"OWNER"},{"sr":436,"khewat":"122","khata":"239","khasra":"48","name":"gulam kadir","parentage":"(S/o) masmath fazeel","type":"OWNER"},{"sr":437,"khewat":"122","khata":"239","khasra":"48","name":"masmath daulati","parentage":"(D/o) masmath fazeel","type":"OWNER"},{"sr":438,"khewat":"122","khata":"239","khasra":"48","name":"masmath zoona","parentage":"(D/o) masmath fazeel","type":"OWNER"},{"sr":439,"khewat":"122","khata":"239","khasra":"48","name":"masmath kulsuma","parentage":"(D/o) mahda","type":"OWNER"},{"sr":440,"khewat":"122","khata":"239","khasra":"48","name":"masmath mehra","parentage":"(D/o) mahda","type":"OWNER"},{"sr":441,"khewat":"123","khata":"240","khasra":"28","name":"bakir","parentage":"(S/o) gulam","type":"OWNER"},{"sr":442,"khewat":"123","khata":"240","khasra":"28","name":"mohammad","parentage":"(S/o) gulam","type":"OWNER"},{"sr":443,"khewat":"123","khata":"240","khasra":"28","name":"asghar","parentage":"(S/o) gulam","type":"OWNER"},{"sr":444,"khewat":"123","khata":"240","khasra":"28","name":"masmat khatji","parentage":"(D/o) gulam","type":"OWNER"},{"sr":445,"khewat":"124","khata":"241","khasra":"306/37","name":"ali","parentage":"(S/o) bakir","type":"OWNER"},{"sr":446,"khewat":"124","khata":"241","khasra":"306/37","name":"mohammad","parentage":"(S/o) bakir","type":"BOTH"},{"sr":447,"khewat":"124","khata":"241","khasra":"306/37","name":"haider","parentage":"(S/o) bakir","type":"OWNER"},{"sr":448,"khewat":"124","khata":"242","khasra":"307/37","name":"mohd yousaf","parentage":"(S/o) qadir","type":"CULTIVATOR"},{"sr":449,"khewat":"125","khata":"243","khasra":"41","name":"bakir","parentage":"(S/o) qasim","type":"OWNER"},{"sr":450,"khewat":"126","khata":"244","khasra":"63","name":"hussain","parentage":"(S/o) rehman","type":"OWNER"},{"sr":451,"khewat":"126","khata":"244","khasra":"63","name":"hasan","parentage":"(S/o) rehman","type":"BOTH"},{"sr":452,"khewat":"126","khata":"245","khasra":"63","name":"bakir ali","parentage":"(S/o) abli","type":"CULTIVATOR"},{"sr":453,"khewat":"129","khata":"248","khasra":"317/52","name":"mohammad ibrahim","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":454,"khewat":"130","khata":"249","khasra":"316/52","name":"akli","parentage":"(S/o) bakir","type":"OWNER"},{"sr":455,"khewat":"130","khata":"249","khasra":"316/52","name":"mohd yousaf","parentage":"(S/o) hussain","type":"CULTIVATOR"},{"sr":456,"khewat":"130","khata":"249","khasra":"316/52","name":"masamat rafiqa begum","parentage":"(W/o) mohd yousaf","type":"CULTIVATOR"},{"sr":457,"khewat":"131","khata":"250","khasra":"318/52","name":"juma","parentage":"(S/o) bakir","type":"OWNER"},{"sr":458,"khewat":"133","khata":"254","khasra":"322/52","name":"bakir","parentage":"(S/o) jaffar","type":"OWNER"},{"sr":459,"khewat":"134","khata":"255","khasra":"35","name":"masmat zeba","parentage":"(D/o) rasool","type":"OWNER"},{"sr":460,"khewat":"135","khata":"256","khasra":"40","name":"gulam","parentage":"(S/o) sultan","type":"OWNER"},{"sr":461,"khewat":"135","khata":"256","khasra":"40","name":"ahmad","parentage":"(S/o) sultan","type":"OWNER"},{"sr":462,"khewat":"135","khata":"256","khasra":"40","name":"asgar","parentage":"(S/o) sultan","type":"OWNER"},{"sr":463,"khewat":"135","khata":"256","khasra":"40","name":"talib","parentage":"(S/o) sultan","type":"OWNER"},{"sr":464,"khewat":"135","khata":"256","khasra":"40","name":"masmath khatji","parentage":"(D/o) sultan","type":"OWNER"},{"sr":465,"khewat":"135","khata":"256","khasra":"40","name":"masmath zoona","parentage":"(D/o) sultan","type":"OWNER"},{"sr":466,"khewat":"67","khata":"150","khasra":"120","name":"masmath raja","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":467,"khewat":"67","khata":"150","khasra":"120","name":"masmath shibli","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":468,"khewat":"67","khata":"150","khasra":"120","name":"masmath khatji","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":469,"khewat":"67","khata":"150","khasra":"120","name":"mehmood","parentage":"(S/o) musa","type":"OWNER"},{"sr":470,"khewat":"67","khata":"150","khasra":"120","name":"altaf","parentage":"(S/o) musa","type":"OWNER"},{"sr":471,"khewat":"67","khata":"150","khasra":"120","name":"ahmad","parentage":"(S/o) musa","type":"OWNER"},{"sr":472,"khewat":"67","khata":"150","khasra":"120","name":"masmath kulsuma","parentage":"(D/o) musa","type":"OWNER"},{"sr":473,"khewat":"67","khata":"150","khasra":"120","name":"masmath halima","parentage":"(D/o) musa","type":"OWNER"},{"sr":474,"khewat":"67","khata":"150","khasra":"120","name":"masmath fatima","parentage":"(D/o) qasim","type":"OWNER"},{"sr":475,"khewat":"67","khata":"150","khasra":"120","name":"masmath zeba","parentage":"(D/o) qasim","type":"OWNER"},{"sr":476,"khewat":"67","khata":"150","khasra":"120","name":"ishak","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":477,"khewat":"67","khata":"150","khasra":"120","name":"qasim","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":478,"khewat":"69","khata":"153","khasra":"155","name":"masmath fata","parentage":"(D/o) qasim","type":"OWNER"},{"sr":479,"khewat":"69","khata":"153","khasra":"155","name":"masmat sakina","parentage":"(D/o) bakir","type":"OWNER"},{"sr":480,"khewat":"69","khata":"153","khasra":"155","name":"masmath fahmida","parentage":"(D/o) bakir","type":"OWNER"},{"sr":481,"khewat":"70","khata":"155","khasra":"84","name":"ibrahim","parentage":"(S/o) raheem","type":"OWNER"},{"sr":482,"khewat":"70","khata":"155","khasra":"84","name":"masmath kulsuma","parentage":"(D/o) raheem","type":"OWNER"},{"sr":483,"khewat":"70","khata":"155","khasra":"84","name":"gulam","parentage":"(S/o) rehman","type":"OWNER"},{"sr":484,"khewat":"70","khata":"155","khasra":"84","name":"masmath daulati","parentage":"(D/o) rehman","type":"OWNER"},{"sr":485,"khewat":"70","khata":"155","khasra":"84","name":"masmath khatji","parentage":"(D/o) rehman","type":"OWNER"},{"sr":486,"khewat":"70","khata":"155","khasra":"84","name":"masmath raja","parentage":"(D/o) rehman","type":"OWNER"},{"sr":487,"khewat":"70","khata":"155","khasra":"84","name":"masmath fazi","parentage":"(D/o) rehman","type":"OWNER"},{"sr":488,"khewat":"70","khata":"155","khasra":"84","name":"ali","parentage":"(S/o) rehman","type":"OWNER"},{"sr":489,"khewat":"70","khata":"155","khasra":"84","name":"sona","parentage":"(S/o) rehman","type":"OWNER"},{"sr":490,"khewat":"71","khata":"156","khasra":"119","name":"mohammad akbar","parentage":"(S/o) mehda","type":"OWNER"},{"sr":491,"khewat":"71","khata":"156","khasra":"119","name":"mohammad","parentage":"(S/o) mehda","type":"BOTH"},{"sr":492,"khewat":"71","khata":"156","khasra":"119","name":"makbool","parentage":"(S/o) mehda","type":"OWNER"},{"sr":493,"khewat":"71","khata":"156","khasra":"119","name":"abdullah","parentage":"(S/o) mehda","type":"OWNER"},{"sr":494,"khewat":"71","khata":"156","khasra":"119","name":"musammati daulati","parentage":"(D/o) mehda","type":"OWNER"},{"sr":495,"khewat":"71","khata":"156","khasra":"119","name":"masmath salmi","parentage":"(D/o) mehda","type":"OWNER"},{"sr":496,"khewat":"71","khata":"157","khasra":"107","name":"makbooza mehkma irrigation","parentage":"(Others) maqbooza mehkma irrigation","type":"CULTIVATOR"},{"sr":497,"khewat":"72","khata":"158","khasra":"138","name":"gulzar ahamd","parentage":"(S/o) rustam","type":"OWNER"},{"sr":498,"khewat":"72","khata":"158","khasra":"138","name":"shabir ahmad","parentage":"(S/o) rustam","type":"OWNER"},{"sr":499,"khewat":"72","khata":"158","khasra":"138","name":"masmath zubeida","parentage":"(D/o) rustam","type":"OWNER"},{"sr":500,"khewat":"72","khata":"158","khasra":"138","name":"masmath khatji","parentage":"(W/o) rustam","type":"OWNER"},{"sr":501,"khewat":"72","khata":"158","khasra":"138","name":"haider","parentage":"(S/o) hussain","type":"OWNER"},{"sr":502,"khewat":"72","khata":"158","khasra":"138","name":"juma","parentage":"(S/o) hussain","type":"OWNER"},{"sr":503,"khewat":"72","khata":"158","khasra":"138","name":"masmath bega","parentage":"(D/o) hussain","type":"OWNER"},{"sr":504,"khewat":"72","khata":"158","khasra":"138","name":"gulam mohammad","parentage":"(S/o) lal","type":"OWNER"},{"sr":505,"khewat":"72","khata":"158","khasra":"138","name":"ali mohammad","parentage":"(S/o) lal","type":"OWNER"},{"sr":506,"khewat":"72","khata":"158","khasra":"138","name":"gulam haider","parentage":"(S/o) lal","type":"OWNER"},{"sr":507,"khewat":"72","khata":"158","khasra":"138","name":"mohammad ishak","parentage":"(S/o) lal","type":"OWNER"},{"sr":508,"khewat":"72","khata":"158","khasra":"138","name":"masmath rahmi","parentage":"(D/o) lal","type":"OWNER"},{"sr":509,"khewat":"72","khata":"158","khasra":"138","name":"masmath khatooni","parentage":"(D/o) lal","type":"OWNER"},{"sr":510,"khewat":"72","khata":"158","khasra":"138","name":"masmath zooni","parentage":"(W/o) lal","type":"OWNER"},{"sr":511,"khewat":"72","khata":"158","khasra":"138","name":"ramzan","parentage":"(S/o) rustam","type":"OWNER"},{"sr":512,"khewat":"77","khata":"170","khasra":"332/88/1","name":"masmath fazli","parentage":"(D/o) hasan","type":"OWNER"},{"sr":513,"khewat":"77","khata":"170","khasra":"332/88/1","name":"masmath fata","parentage":"(W/o) hasan","type":"OWNER"},{"sr":514,"khewat":"79","khata":"173","khasra":"263","name":"Ghulam Mohammad","parentage":"(S/o) Ramzan","type":"OWNER"},{"sr":515,"khewat":"79","khata":"173","khasra":"263","name":"Zainab","parentage":"(D/o) Ramzan","type":"OWNER"},{"sr":516,"khewat":"79","khata":"173","khasra":"263","name":"Khatji","parentage":"(D/o) Ramzan","type":"OWNER"},{"sr":517,"khewat":"79","khata":"173","khasra":"263","name":"Raja","parentage":"(D/o) Ramzan","type":"OWNER"},{"sr":518,"khewat":"105","khata":"221","khasra":"268/1","name":"ishak","parentage":"(S/o) hasan","type":"OWNER"},{"sr":519,"khewat":"105","khata":"221","khasra":"268/1","name":"maksood","parentage":"(S/o) mehdi","type":"OWNER"},{"sr":520,"khewat":"105","khata":"221","khasra":"268/1","name":"safdur","parentage":"(S/o) hasan","type":"OWNER"},{"sr":521,"khewat":"105","khata":"222","khasra":"269/1","name":"ghulam mohi din","parentage":"(S/o) subhan","type":"CULTIVATOR"},{"sr":522,"khewat":"105","khata":"222","khasra":"269/1","name":"altaf hussain","parentage":"(S/o) subhan","type":"CULTIVATOR"},{"sr":523,"khewat":"105","khata":"222","khasra":"269/1","name":"shahnwaz hussain","parentage":"(S/o) subhan","type":"CULTIVATOR"},{"sr":524,"khewat":"147","khata":"269","khasra":"333/88/1","name":"nanda lal","parentage":"(S/o) thakur","type":"OWNER"},{"sr":525,"khewat":"147","khata":"269","khasra":"333/88/1","name":"jia lal","parentage":"(S/o) thakur","type":"OWNER"},{"sr":526,"khewat":"147","khata":"269","khasra":"333/88/1","name":"rugu nath","parentage":"(S/o) thakur","type":"OWNER"},{"sr":527,"khewat":"147","khata":"269","khasra":"333/88/1","name":"sham lal","parentage":"(S/o) tila","type":"OWNER"},{"sr":528,"khewat":"147","khata":"269","khasra":"333/88/1","name":"prem nath","parentage":"(S/o) tila","type":"OWNER"},{"sr":529,"khewat":"147","khata":"269","khasra":"333/88/1","name":"umkar nath","parentage":"(S/o) tila","type":"OWNER"},{"sr":530,"khewat":"146","khata":"268","khasra":"49","name":"gulam mohammad","parentage":"(S/o) asmal","type":"OWNER"},{"sr":531,"khewat":"146","khata":"268","khasra":"49","name":"mohammad jafar","parentage":"(S/o) asmal","type":"OWNER"},{"sr":532,"khewat":"145","khata":"267","khasra":"77","name":"mustafa","parentage":"(S/o) buzurg","type":"OWNER"},{"sr":533,"khewat":"145","khata":"267","khasra":"77","name":"martzaaaaaia","parentage":"(S/o) buzurg","type":"OWNER"},{"sr":534,"khewat":"2","khata":"2","khasra":"62","name":"mohammad afzal","parentage":"(S/o) haider","type":"OWNER"},{"sr":535,"khewat":"2","khata":"2","khasra":"62","name":"ali mohammad","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":536,"khewat":"2","khata":"2","khasra":"62","name":"mohammad akber","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":537,"khewat":"2","khata":"2","khasra":"62","name":"gulam rasool","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":538,"khewat":"2","khata":"2","khasra":"62","name":"abdul rahim","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":539,"khewat":"2","khata":"2","khasra":"62","name":"gulam hussain","parentage":"(S/o) masmat kulsooma","type":"OWNER"},{"sr":540,"khewat":"6","khata":"10","khasra":"136","name":"abbli","parentage":"(S/o) parwarda haider","type":"OWNER"},{"sr":541,"khewat":"6","khata":"10","khasra":"136","name":"Ghulam Mohammad","parentage":"(S/o) Akli Bhat","type":"OWNER"},{"sr":542,"khewat":"6","khata":"10","khasra":"136","name":"Mohammad Abdullah","parentage":"(S/o) Akli Bhat Sakenin Deh","type":"OWNER"},{"sr":543,"khewat":"6","khata":"10","khasra":"136","name":"Raja","parentage":"(D/o) Akli Bhat Sakenin Deh","type":"OWNER"},{"sr":544,"khewat":"6","khata":"10","khasra":"136","name":"rehman","parentage":"(S/o) juma","type":"BOTH"},{"sr":545,"khewat":"7","khata":"16","khasra":"174","name":"ali mohd","parentage":"(S/o) lal","type":"CULTIVATOR"},{"sr":546,"khewat":"7","khata":"16","khasra":"174","name":"ghulam mohd","parentage":"(S/o) lal","type":"CULTIVATOR"},{"sr":547,"khewat":"11","khata":"46","khasra":"91","name":"Ghulam Hassan","parentage":"(S/o) Zeba Dar","type":"OWNER"},{"sr":548,"khewat":"11","khata":"46","khasra":"91","name":"Gulzar Ahmed","parentage":"(S/o) Zeba","type":"OWNER"},{"sr":549,"khewat":"11","khata":"46","khasra":"91","name":"Fehmida","parentage":"(D/o) Zeba","type":"OWNER"},{"sr":550,"khewat":"11","khata":"46","khasra":"91","name":"Hajra","parentage":"(D/o) Zeba","type":"OWNER"},{"sr":551,"khewat":"11","khata":"46","khasra":"91","name":"Halima","parentage":"(D/o) Zeba","type":"OWNER"},{"sr":552,"khewat":"11","khata":"46","khasra":"91","name":"Afroza","parentage":"(D/o) Zeba","type":"OWNER"},{"sr":553,"khewat":"23","khata":"62","khasra":"223","name":"abdul rehman","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":554,"khewat":"23","khata":"62","khasra":"223","name":"gulam rasool","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":555,"khewat":"23","khata":"62","khasra":"223","name":"masmat zoona","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":556,"khewat":"23","khata":"62","khasra":"223","name":"masmat kulsuma","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":557,"khewat":"23","khata":"62","khasra":"223","name":"gulam","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":558,"khewat":"23","khata":"62","khasra":"223","name":"gulam hussain","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":559,"khewat":"23","khata":"62","khasra":"223","name":"akbar","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":560,"khewat":"23","khata":"62","khasra":"223","name":"masmat fata","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":561,"khewat":"42","khata":"95","khasra":"93","name":"Mohammad Shafi","parentage":"(S/o) Ali","type":"OWNER"},{"sr":562,"khewat":"42","khata":"95","khasra":"93","name":"Nasir Ali","parentage":"(S/o) Ali","type":"OWNER"},{"sr":563,"khewat":"42","khata":"95","khasra":"93","name":"Hafizullah","parentage":"(S/o) Ali","type":"OWNER"},{"sr":564,"khewat":"42","khata":"95","khasra":"93","name":"Kalsuma","parentage":"(D/o) Ali","type":"OWNER"},{"sr":565,"khewat":"42","khata":"95","khasra":"93","name":"Hajra","parentage":"(D/o) Ali","type":"OWNER"},{"sr":566,"khewat":"42","khata":"95","khasra":"93","name":"Nasima","parentage":"(D/o) Ali","type":"OWNER"},{"sr":567,"khewat":"42","khata":"95","khasra":"93","name":"Hamida","parentage":"(D/o) ali","type":"OWNER"},{"sr":568,"khewat":"42","khata":"95","khasra":"93","name":"Mima","parentage":"(D/o) ali","type":"OWNER"},{"sr":569,"khewat":"42","khata":"95","khasra":"93","name":"Zeba","parentage":"(W/o) ali","type":"OWNER"},{"sr":570,"khewat":"42","khata":"95","khasra":"93","name":"masmat bega","parentage":"(D/o) bakir","type":"OWNER"},{"sr":571,"khewat":"42","khata":"95","khasra":"93","name":"masmat mughli","parentage":"(D/o) bakir","type":"OWNER"},{"sr":572,"khewat":"42","khata":"95","khasra":"93","name":"masmat fatima","parentage":"(D/o) bakir","type":"OWNER"},{"sr":573,"khewat":"42","khata":"95","khasra":"93","name":"qasim ali","parentage":"(S/o) haider ali","type":"BOTH"},{"sr":574,"khewat":"42","khata":"95","khasra":"93","name":"masmat maryam","parentage":"(D/o) haider ali","type":"OWNER"},{"sr":575,"khewat":"42","khata":"95","khasra":"93","name":"masmat sakina","parentage":"(D/o) haider ali","type":"OWNER"},{"sr":576,"khewat":"42","khata":"95","khasra":"93","name":"masmat jali","parentage":"(D/o) haider ali","type":"OWNER"},{"sr":577,"khewat":"42","khata":"95","khasra":"93","name":"masmat halima","parentage":"(D/o) haider ali","type":"OWNER"},{"sr":578,"khewat":"42","khata":"95","khasra":"93","name":"masmat khadija","parentage":"(D/o) haider ali","type":"OWNER"},{"sr":579,"khewat":"42","khata":"95","khasra":"93","name":"masmat jana","parentage":"(D/o) haider ali","type":"OWNER"},{"sr":580,"khewat":"42","khata":"97","khasra":"255","name":"masamat maryam","parentage":"(D/o) haider ali","type":"CULTIVATOR"},{"sr":581,"khewat":"42","khata":"97","khasra":"255","name":"masamat sakina","parentage":"(D/o) haider ali","type":"CULTIVATOR"},{"sr":582,"khewat":"42","khata":"97","khasra":"255","name":"masamat jali","parentage":"(D/o) haider ali","type":"CULTIVATOR"},{"sr":583,"khewat":"42","khata":"97","khasra":"255","name":"masamat halima","parentage":"(D/o) haider ali","type":"CULTIVATOR"},{"sr":584,"khewat":"42","khata":"97","khasra":"255","name":"masamat khadija","parentage":"(D/o) haider ali","type":"CULTIVATOR"},{"sr":585,"khewat":"42","khata":"97","khasra":"255","name":"jana","parentage":"(S/o) haider ali","type":"CULTIVATOR"},{"sr":586,"khewat":"42","khata":"98","khasra":"230","name":"nisar ahmed","parentage":"(S/o) abdul rahim","type":"CULTIVATOR"},{"sr":587,"khewat":"42","khata":"98","khasra":"230","name":"ashiq hussain","parentage":"(S/o) abdul rahim","type":"CULTIVATOR"},{"sr":588,"khewat":"42","khata":"98","khasra":"230","name":"firdos ali","parentage":"(S/o) abdul rahim","type":"CULTIVATOR"},{"sr":589,"khewat":"42","khata":"98","khasra":"230","name":"hamida","parentage":"(D/o) abdul rahim","type":"CULTIVATOR"},{"sr":590,"khewat":"42","khata":"98","khasra":"230","name":"farida","parentage":"(D/o) abdul rahim","type":"CULTIVATOR"},{"sr":591,"khewat":"42","khata":"98","khasra":"230","name":"akila","parentage":"(D/o) abdul rahim","type":"CULTIVATOR"},{"sr":592,"khewat":"38","khata":"86","khasra":"13","name":"bashir ahmad","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":593,"khewat":"38","khata":"86","khasra":"13","name":"hasan","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":594,"khewat":"38","khata":"86","khasra":"13","name":"yousuf","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":595,"khewat":"38","khata":"86","khasra":"13","name":"mahda","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":596,"khewat":"38","khata":"86","khasra":"13","name":"masmat boba","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":597,"khewat":"38","khata":"86","khasra":"13","name":"masmat zubeida","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":598,"khewat":"38","khata":"86","khasra":"13","name":"masmat shami","parentage":"(S/o) ahmad","type":"OWNER"},{"sr":599,"khewat":"38","khata":"89","khasra":"243","name":"mohd qasim","parentage":"(S/o) mohd ibrahim","type":"CULTIVATOR"},{"sr":600,"khewat":"38","khata":"89","khasra":"243","name":"firoz ali","parentage":"(S/o) mohd ibrahim","type":"CULTIVATOR"},{"sr":601,"khewat":"38","khata":"89","khasra":"243","name":"arshad ahmed","parentage":"(S/o) mohd ibrahim","type":"CULTIVATOR"},{"sr":602,"khewat":"38","khata":"90","khasra":"285/13","name":"ghulam ahmed dar pisarparwarda","parentage":"(Others) juma butt","type":"CULTIVATOR"},{"sr":603,"khewat":"38","khata":"91","khasra":"283/11","name":"abdullah","parentage":"(S/o) ahmad","type":"CULTIVATOR"},{"sr":604,"khewat":"38","khata":"91","khasra":"283/11","name":"bashir ahmed","parentage":"(S/o) ramzan","type":"CULTIVATOR"},{"sr":605,"khewat":"38","khata":"91","khasra":"283/11","name":"mohd akbar","parentage":"(S/o) ramzan","type":"CULTIVATOR"},{"sr":606,"khewat":"38","khata":"91","khasra":"283/11","name":"anwar hasan","parentage":"(S/o) ghulam hasan","type":"CULTIVATOR"},{"sr":607,"khewat":"43","khata":"103","khasra":"358/203","name":"mohd yousaf","parentage":"(S/o) mohd sultan","type":"CULTIVATOR"},{"sr":608,"khewat":"60","khata":"136","khasra":"156","name":"ali mohd","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":609,"khewat":"75","khata":"165","khasra":"279/10","name":"ghulam mohd","parentage":"(S/o) ghulam ahmed","type":"CULTIVATOR"},{"sr":610,"khewat":"75","khata":"166","khasra":"280/10","name":"asad mir","parentage":"(S/o) qasim mir","type":"CULTIVATOR"},{"sr":611,"khewat":"84","khata":"183","khasra":"192","name":"Kalsuma Khana Nasheen","parentage":"(D/o) Mohammad Afzal Shah Sakenin Deh","type":"OWNER"},{"sr":612,"khewat":"84","khata":"183","khasra":"192","name":"Maryam","parentage":"(D/o) Mohammad Afzal Shah Sakenin Deh","type":"OWNER"},{"sr":613,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Zahoor","parentage":"(S/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":614,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Maqbool","parentage":"(S/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":615,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Kousher","parentage":"(S/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":616,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Mahoora","parentage":"(S/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":617,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Fatima","parentage":"(D/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":618,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Shafiqa","parentage":"(D/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":619,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Amina","parentage":"(D/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":620,"khewat":"84","khata":"183","khasra":"192","name":"Sayed Jana","parentage":"(D/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":621,"khewat":"84","khata":"183","khasra":"192","name":"Zoona","parentage":"(W/o) Sayed Mohammad Shah Sakenin Deh","type":"OWNER"},{"sr":622,"khewat":"84","khata":"183","khasra":"192","name":"qasim","parentage":"(S/o) mustafa","type":"OWNER"},{"sr":623,"khewat":"84","khata":"183","khasra":"192","name":"masmath zainab","parentage":"(D/o) mustafa","type":"OWNER"},{"sr":624,"khewat":"84","khata":"183","khasra":"192","name":"masmath raja","parentage":"(D/o) mustafa","type":"OWNER"},{"sr":625,"khewat":"84","khata":"183","khasra":"192","name":"masmath fatima","parentage":"(D/o) mustafa","type":"OWNER"},{"sr":626,"khewat":"132","khata":"252","khasra":"320/52","name":"rehman","parentage":"(S/o) bakir","type":"OWNER"},{"sr":627,"khewat":"138","khata":"260","khasra":"44","name":"masmath fazeel","parentage":"(D/o) ahmad","type":"OWNER"},{"sr":628,"khewat":"9","khata":"24","khasra":"160","name":"abbli","parentage":"(S/o) haider","type":"CULTIVATOR"},{"sr":629,"khewat":"46","khata":"107","khasra":"207","name":"masmat azizi","parentage":"(W/o) hasan","type":"OWNER"},{"sr":630,"khewat":"59","khata":"134","khasra":"158","name":"masmat klsumah","parentage":"(D/o) raheem","type":"OWNER"},{"sr":631,"khewat":"59","khata":"134","khasra":"158","name":"masmath khatooni","parentage":"(D/o) rehman","type":"OWNER"},{"sr":632,"khewat":"59","khata":"134","khasra":"158","name":"masmath salma","parentage":"(D/o) rehman","type":"OWNER"},{"sr":633,"khewat":"59","khata":"134","khasra":"158","name":"masmath jani","parentage":"(D/o) rehman","type":"OWNER"},{"sr":634,"khewat":"58","khata":"133","khasra":"22","name":"ghulam mohd wagiyara hissadaran","parentage":"(S/o) hassan","type":"CULTIVATOR"},{"sr":635,"khewat":"58","khata":"133","khasra":"22","name":"ahmed","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":636,"khewat":"30","khata":"73","khasra":"153","name":"mohd ishaq","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":637,"khewat":"30","khata":"73","khasra":"153","name":"ghulam mohd","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":638,"khewat":"30","khata":"73","khasra":"153","name":"mohd jafar","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":639,"khewat":"30","khata":"73","khasra":"153","name":"masmat raja","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":640,"khewat":"30","khata":"73","khasra":"153","name":"masmat zeba","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":641,"khewat":"30","khata":"73","khasra":"153","name":"masmat maryam","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":642,"khewat":"30","khata":"73","khasra":"153","name":"ghulam ahmad","parentage":"(S/o) hasan","type":"CULTIVATOR"},{"sr":643,"khewat":"9","khata":"28","khasra":"161","name":"haider","parentage":"(S/o) na","type":"CULTIVATOR"},{"sr":644,"khewat":"9","khata":"28","khasra":"161","name":"kasim","parentage":"(S/o) na","type":"CULTIVATOR"},{"sr":645,"khewat":"9","khata":"28","khasra":"161","name":"rehman","parentage":"(S/o) na","type":"CULTIVATOR"},{"sr":646,"khewat":"9","khata":"28","khasra":"161","name":"khatji","parentage":"(S/o) na","type":"CULTIVATOR"},{"sr":647,"khewat":"9","khata":"28","khasra":"161","name":"farzani","parentage":"(S/o) na","type":"CULTIVATOR"},{"sr":648,"khewat":"9","khata":"23","khasra":"162","name":"akli","parentage":"(S/o) parwarda qasim","type":"OWNER"},{"sr":649,"khewat":"9","khata":"23","khasra":"162","name":"showkat ali","parentage":"(S/o) masmat feeza","type":"OWNER"},{"sr":650,"khewat":"9","khata":"29","khasra":"133","name":"mohammad jafar","parentage":"(S/o) ahmad","type":"CULTIVATOR"},{"sr":651,"khewat":"9","khata":"36","khasra":"260","name":"ghulam hyder","parentage":"(S/o) juma","type":"CULTIVATOR"},{"sr":652,"khewat":"9","khata":"30","khasra":"133","name":"mohammad akbar","parentage":"(S/o) ramzab","type":"CULTIVATOR"},{"sr":653,"khewat":"102","khata":"215","khasra":"182/1","name":"rasool","parentage":"(S/o) rehman","type":"CULTIVATOR"},{"sr":654,"khewat":"102","khata":"215","khasra":"182/1","name":"haider","parentage":"(S/o) rehman","type":"CULTIVATOR"},{"sr":655,"khewat":"102","khata":"215","khasra":"182/1","name":"abloo","parentage":"(S/o) ahmad","type":"CULTIVATOR"},{"sr":656,"khewat":"62","khata":"140","khasra":"157","name":"masamat zeba","parentage":"(D/o) masamt kalsuma","type":"CULTIVATOR"},{"sr":657,"khewat":"9","khata":"26","khasra":"265","name":"abli pisar parwarda","parentage":"(S/o) haider","type":"CULTIVATOR"},{"sr":658,"khewat":"9","khata":"26","khasra":"265","name":"aqli pisar parwarda","parentage":"(S/o) qasim","type":"CULTIVATOR"},{"sr":659,"khewat":"9","khata":"27","khasra":"265","name":"manzoor ahmed","parentage":"(S/o) baqir","type":"CULTIVATOR"},{"sr":660,"khewat":"9","khata":"27","khasra":"265","name":"ishfaq hussain","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":661,"khewat":"9","khata":"27","khasra":"265","name":"tanveer hussain","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":662,"khewat":"9","khata":"27","khasra":"265","name":"begha","parentage":"(D/o) ghulam","type":"CULTIVATOR"},{"sr":663,"khewat":"9","khata":"31","khasra":"240","name":"mohd","parentage":"(S/o) rehman","type":"CULTIVATOR"},{"sr":664,"khewat":"9","khata":"31","khasra":"240","name":"habib","parentage":"(S/o) rehman","type":"CULTIVATOR"},{"sr":665,"khewat":"9","khata":"32","khasra":"262","name":"mohd jafar","parentage":"(S/o) ismal","type":"CULTIVATOR"},{"sr":666,"khewat":"9","khata":"32","khasra":"262","name":"ghulam ahmed","parentage":"(S/o) ismal","type":"CULTIVATOR"},{"sr":667,"khewat":"17","khata":"53","khasra":"126","name":"Rehman","parentage":"(S/o) Mehdi","type":"CULTIVATOR"},{"sr":668,"khewat":"17","khata":"53","khasra":"126","name":"Kazim","parentage":"(S/o) Mehdi","type":"CULTIVATOR"},{"sr":669,"khewat":"17","khata":"53","khasra":"126","name":"Ahmad","parentage":"(S/o) Mehdi","type":"CULTIVATOR"},{"sr":670,"khewat":"17","khata":"53","khasra":"126","name":"Maqbuza khud","parentage":"(S/o) Na","type":"CULTIVATOR"},{"sr":671,"khewat":"9","khata":"35","khasra":"260","name":"mohd yaqoob","parentage":"(S/o) ghulam hasan","type":"CULTIVATOR"},{"sr":672,"khewat":"9","khata":"35","khasra":"260","name":"abdul rehman","parentage":"(S/o) ghulam hasan","type":"CULTIVATOR"},{"sr":673,"khewat":"9","khata":"37","khasra":"260","name":"ashaq hussain","parentage":"(S/o) ghulam qadir","type":"CULTIVATOR"},{"sr":674,"khewat":"9","khata":"38","khasra":"260","name":"ashaq hussain","parentage":"(S/o) ghulam mohd","type":"CULTIVATOR"},{"sr":675,"khewat":"9","khata":"39","khasra":"241","name":"manzoor ahmed","parentage":"(S/o) jafar","type":"CULTIVATOR"},{"sr":676,"khewat":"9","khata":"39","khasra":"241","name":"ishfaq husain","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":677,"khewat":"9","khata":"39","khasra":"241","name":"masamat begha","parentage":"(D/o) ghulam","type":"CULTIVATOR"},{"sr":678,"khewat":"9","khata":"41","khasra":"256","name":"abdul rahim","parentage":"(S/o) haji abli","type":"CULTIVATOR"},{"sr":679,"khewat":"9","khata":"42","khasra":"256","name":"ghulam qadir","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":680,"khewat":"9","khata":"42","khasra":"256","name":"bashir ahmed","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":681,"khewat":"9","khata":"42","khasra":"256","name":"mohd maqbool","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":682,"khewat":"9","khata":"42","khasra":"256","name":"mohd afzal","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":683,"khewat":"9","khata":"42","khasra":"256","name":"nazir ahmed","parentage":"(S/o) mohd akbar","type":"CULTIVATOR"},{"sr":684,"khewat":"9","khata":"42","khasra":"256","name":"masamat amina","parentage":"(D/o) mohd akbar","type":"CULTIVATOR"},{"sr":685,"khewat":"9","khata":"42","khasra":"256","name":"masamat fehmida","parentage":"(D/o) mohd akbar","type":"CULTIVATOR"},{"sr":686,"khewat":"9","khata":"43","khasra":"171","name":"ramzan","parentage":"(S/o) alim","type":"CULTIVATOR"},{"sr":687,"khewat":"9","khata":"43","khasra":"171","name":"rehman","parentage":"(S/o) alim","type":"CULTIVATOR"},{"sr":688,"khewat":"9","khata":"43","khasra":"171","name":"talib","parentage":"(S/o) alim","type":"CULTIVATOR"},{"sr":689,"khewat":"9","khata":"43","khasra":"171","name":"sultan","parentage":"(S/o) alim","type":"CULTIVATOR"},{"sr":690,"khewat":"9","khata":"44","khasra":"168","name":"mohd","parentage":"(S/o) zama shah","type":"CULTIVATOR"},{"sr":691,"khewat":"54","khata":"125","khasra":"276/9","name":"ghulam hasan","parentage":"(S/o) mohd","type":"CULTIVATOR"},{"sr":692,"khewat":"54","khata":"126","khasra":"277/9","name":"mohd yousaf","parentage":"(S/o) mohd","type":"CULTIVATOR"},{"sr":693,"khewat":"18","khata":"56","khasra":"26","name":"ramzan","parentage":"(S/o) amar","type":"CULTIVATOR"},{"sr":694,"khewat":"38","khata":"88","khasra":"234","name":"Rasool","parentage":"(S/o) mehdi","type":"CULTIVATOR"},{"sr":695,"khewat":"38","khata":"88","khasra":"234","name":"ali","parentage":"(S/o) mehdi","type":"CULTIVATOR"},{"sr":696,"khewat":"38","khata":"88","khasra":"234","name":"mohammad","parentage":"(S/o) mehdi","type":"CULTIVATOR"},{"sr":697,"khewat":"60","khata":"137","khasra":"123","name":"hiader","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":698,"khewat":"60","khata":"137","khasra":"123","name":"ghulam","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":699,"khewat":"7","khata":"14","khasra":"226","name":"masmat fata","parentage":"(D/o) khatji","type":"CULTIVATOR"},{"sr":700,"khewat":"7","khata":"14","khasra":"226","name":"masmat raja","parentage":"(D/o) khatji","type":"CULTIVATOR"},{"sr":701,"khewat":"53","khata":"120","khasra":"266/1","name":"shshnawaz hussain","parentage":"(S/o) mohammad","type":"CULTIVATOR"},{"sr":702,"khewat":"53","khata":"120","khasra":"266/1","name":"altaf hussain","parentage":"(S/o) mohammad","type":"CULTIVATOR"},{"sr":703,"khewat":"53","khata":"120","khasra":"266/1","name":"ghulam mohiuddin","parentage":"(S/o) mohammad","type":"CULTIVATOR"},{"sr":704,"khewat":"7","khata":"17","khasra":"237","name":"ghulam mohammad","parentage":"(S/o) haider","type":"CULTIVATOR"},{"sr":705,"khewat":"7","khata":"17","khasra":"237","name":"ali mohad","parentage":"(S/o) haider","type":"CULTIVATOR"},{"sr":706,"khewat":"9","khata":"33","khasra":"260","name":"bakir","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":707,"khewat":"9","khata":"33","khasra":"260","name":"hasan","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":708,"khewat":"9","khata":"33","khasra":"260","name":"kadir","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":709,"khewat":"9","khata":"33","khasra":"260","name":"manzoor","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":710,"khewat":"9","khata":"33","khasra":"260","name":"ishaq hussain","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":711,"khewat":"9","khata":"33","khasra":"260","name":"tanvir hussain","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":712,"khewat":"9","khata":"33","khasra":"260","name":"masmat sabika","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":713,"khewat":"9","khata":"33","khasra":"260","name":"ali mohd","parentage":"(S/o) juma","type":"CULTIVATOR"},{"sr":714,"khewat":"9","khata":"33","khasra":"260","name":"jana","parentage":"(S/o) juma","type":"CULTIVATOR"},{"sr":715,"khewat":"9","khata":"33","khasra":"260","name":"mughli","parentage":"(S/o) juma","type":"CULTIVATOR"},{"sr":716,"khewat":"9","khata":"33","khasra":"260","name":"khatji","parentage":"(S/o) juma","type":"CULTIVATOR"},{"sr":717,"khewat":"82","khata":"179","khasra":"140","name":"masmath jila","parentage":"(D/o) yasin","type":"OWNER"},{"sr":718,"khewat":"82","khata":"179","khasra":"140","name":"gulam ali","parentage":"(S/o) yasin","type":"OWNER"},{"sr":719,"khewat":"82","khata":"179","khasra":"140","name":"zainab","parentage":"(W/o) yasin","type":"OWNER"},{"sr":720,"khewat":"119","khata":"236","khasra":"61","name":"Ghulam Rasool","parentage":"(S/o) Ahmad Bhat Sakenin Deh","type":"OWNER"},{"sr":721,"khewat":"119","khata":"236","khasra":"61","name":"Fatima","parentage":"(D/o) Ahmad Bhat Sakenin Deh","type":"OWNER"},{"sr":722,"khewat":"119","khata":"236","khasra":"61","name":"Daulati","parentage":"(D/o) Ahmad Bhat Sakenin Deh","type":"OWNER"},{"sr":723,"khewat":"43","khata":"101","khasra":"79","name":"masmat jana","parentage":"(D/o) hasan","type":"OWNER"},{"sr":724,"khewat":"43","khata":"101","khasra":"79","name":"mohammad yousuf","parentage":"(S/o) sultan","type":"OWNER"},{"sr":725,"khewat":"43","khata":"101","khasra":"79","name":"masmat fata","parentage":"(D/o) sultan","type":"OWNER"},{"sr":726,"khewat":"43","khata":"101","khasra":"79","name":"riaz ahmad","parentage":"(S/o) akbar","type":"OWNER"},{"sr":727,"khewat":"43","khata":"101","khasra":"79","name":"mohammad afazal","parentage":"(S/o) akbar","type":"OWNER"},{"sr":728,"khewat":"43","khata":"101","khasra":"79","name":"masmat mahmoodah","parentage":"(D/o) akbar","type":"OWNER"},{"sr":729,"khewat":"43","khata":"101","khasra":"79","name":"masmat afroza","parentage":"(D/o) akbar","type":"OWNER"},{"sr":730,"khewat":"43","khata":"101","khasra":"79","name":"masmat batoola","parentage":"(D/o) akbar","type":"OWNER"},{"sr":731,"khewat":"43","khata":"101","khasra":"79","name":"masmat rukayya","parentage":"(D/o) akbar","type":"OWNER"},{"sr":732,"khewat":"43","khata":"101","khasra":"79","name":"masmat fatima","parentage":"(W/o) akbar","type":"OWNER"},{"sr":733,"khewat":"9","khata":"40","khasra":"225","name":"rehman wagiyara","parentage":"(S/o) baqir","type":"CULTIVATOR"},{"sr":734,"khewat":"64","khata":"143","khasra":"286/14","name":"sghulam mohd wagiyra hissadar","parentage":"(S/o) masamat khatji","type":"CULTIVATOR"},{"sr":735,"khewat":"9","khata":"40","khasra":"217","name":"rehman wagiyara","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":736,"khewat":"73","khata":"160","khasra":"83","name":"jafar wagiyara hissedar","parentage":"(S/o) ahmed","type":"CULTIVATOR"},{"sr":737,"khewat":"61","khata":"138","khasra":"88","name":"masmath zooni","parentage":"(W/o) qasim","type":"OWNER"},{"sr":738,"khewat":"61","khata":"138","khasra":"88","name":"masmath rahmi","parentage":"(D/o) masmath sakina","type":"OWNER"},{"sr":739,"khewat":"61","khata":"138","khasra":"88","name":"talib","parentage":"(S/o) masmath sakina","type":"OWNER"},{"sr":740,"khewat":"61","khata":"138","khasra":"88","name":"akbar","parentage":"(S/o) masmath sakina","type":"OWNER"},{"sr":741,"khewat":"63","khata":"141","khasra":"300/30","name":"jawad","parentage":"(S/o) qasim","type":"OWNER"},{"sr":742,"khewat":"63","khata":"141","khasra":"300/30","name":"hussain","parentage":"(S/o) qasim","type":"OWNER"},{"sr":743,"khewat":"63","khata":"141","khasra":"300/30","name":"gulam mohammad","parentage":"(S/o) azar","type":"OWNER"},{"sr":744,"khewat":"63","khata":"141","khasra":"300/30","name":"mohammad akbar","parentage":"(S/o) azar","type":"OWNER"},{"sr":745,"khewat":"63","khata":"141","khasra":"300/30","name":"mohammad ibrahim","parentage":"(S/o) azar","type":"OWNER"},{"sr":746,"khewat":"63","khata":"141","khasra":"300/30","name":"shabir ahmad","parentage":"(S/o) azar","type":"OWNER"},{"sr":747,"khewat":"63","khata":"141","khasra":"300/30","name":"ali mohammad","parentage":"(S/o) azar","type":"OWNER"},{"sr":748,"khewat":"63","khata":"141","khasra":"300/30","name":"mohammad maksood","parentage":"(S/o) azar","type":"OWNER"},{"sr":749,"khewat":"63","khata":"141","khasra":"300/30","name":"gulam hasan","parentage":"(S/o) azar","type":"OWNER"},{"sr":750,"khewat":"63","khata":"141","khasra":"300/30","name":"masmath fazi","parentage":"(D/o) azar","type":"OWNER"},{"sr":751,"khewat":"63","khata":"141","khasra":"300/30","name":"masmath jana","parentage":"(D/o) azar","type":"OWNER"},{"sr":752,"khewat":"63","khata":"141","khasra":"300/30","name":"masmath khatooni","parentage":"(D/o) azar","type":"OWNER"},{"sr":753,"khewat":"63","khata":"141","khasra":"300/30","name":"masmath maryam","parentage":"(D/o) azar","type":"OWNER"},{"sr":754,"khewat":"63","khata":"141","khasra":"300/30","name":"masmath khatji","parentage":"(W/o) azar","type":"OWNER"},{"sr":755,"khewat":"53","khata":"119","khasra":"267/1","name":"abbli","parentage":"(S/o) hasan","type":"OWNER"},{"sr":756,"khewat":"53","khata":"119","khasra":"267/1","name":"akbar","parentage":"(S/o) mohammad","type":"OWNER"},{"sr":757,"khewat":"54","khata":"121","khasra":"272/9","name":"sanaulla","parentage":"(S/o) habib","type":"OWNER"},{"sr":758,"khewat":"54","khata":"121","khasra":"272/9","name":"mohammad munawwar","parentage":"(S/o) habib","type":"OWNER"},{"sr":759,"khewat":"54","khata":"121","khasra":"272/9","name":"samdulla","parentage":"(S/o) habib","type":"OWNER"},{"sr":760,"khewat":"54","khata":"121","khasra":"272/9","name":"gulam ahmad","parentage":"(S/o) habib","type":"OWNER"},{"sr":761,"khewat":"54","khata":"121","khasra":"272/9","name":"gulam mohammad","parentage":"(S/o) habib","type":"OWNER"},{"sr":762,"khewat":"54","khata":"121","khasra":"272/9","name":"abdul ahad","parentage":"(S/o) hasan","type":"OWNER"},{"sr":763,"khewat":"54","khata":"121","khasra":"272/9","name":"gulam mohi uddin","parentage":"(S/o) hasan","type":"OWNER"},{"sr":764,"khewat":"63","khata":"142","khasra":"301/30","name":"syed ashaq hussain","parentage":"(S/o) ali shah","type":"CULTIVATOR"},{"sr":765,"khewat":"64","khata":"144","khasra":"287/14","name":"syed akhter ali","parentage":"(S/o) syed ali shah","type":"CULTIVATOR"},{"sr":766,"khewat":"64","khata":"145","khasra":"288/14","name":"ashaq hussain shah","parentage":"(S/o) ali shah","type":"CULTIVATOR"},{"sr":767,"khewat":"64","khata":"146","khasra":"289/14","name":"syed sajad hussain shah","parentage":"(S/o) ali shah","type":"CULTIVATOR"},{"sr":768,"khewat":"80","khata":"174","khasra":"33","name":"Ablu","parentage":"(S/o) Rehman","type":"CULTIVATOR"},{"sr":769,"khewat":"80","khata":"174","khasra":"33","name":"Fatima","parentage":"(D/o) Rehman","type":"CULTIVATOR"},{"sr":770,"khewat":"80","khata":"174","khasra":"33","name":"Qasim","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":771,"khewat":"80","khata":"174","khasra":"33","name":"Alam","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":772,"khewat":"80","khata":"174","khasra":"33","name":"Abdullah","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":773,"khewat":"80","khata":"174","khasra":"33","name":"Afazal","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":774,"khewat":"80","khata":"174","khasra":"33","name":"Manzoor","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":775,"khewat":"80","khata":"174","khasra":"33","name":"Sakina","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":776,"khewat":"80","khata":"174","khasra":"33","name":"Rafiqa","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":777,"khewat":"80","khata":"174","khasra":"33","name":"Halima","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":778,"khewat":"80","khata":"174","khasra":"33","name":"Abdul rehman","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":779,"khewat":"80","khata":"174","khasra":"33","name":"Majid","parentage":"(S/o) Ali","type":"CULTIVATOR"},{"sr":780,"khewat":"80","khata":"174","khasra":"33","name":"Salma","parentage":"(S/o) Bakir","type":"CULTIVATOR"},{"sr":781,"khewat":"54","khata":"124","khasra":"275/9","name":"Kulsuma","parentage":"(W/o) Ali Mohammad","type":"CULTIVATOR"},{"sr":782,"khewat":"66","khata":"149","khasra":"83","name":"Ghulam Mahoudin","parentage":"(S/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":783,"khewat":"66","khata":"149","khasra":"83","name":"Mohammad Afzal","parentage":"(S/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":784,"khewat":"66","khata":"149","khasra":"83","name":"Mohammad Maqbool","parentage":"(S/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":785,"khewat":"66","khata":"149","khasra":"83","name":"Mohammad Yousaf","parentage":"(S/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":786,"khewat":"66","khata":"149","khasra":"83","name":"Zoona","parentage":"(D/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":787,"khewat":"66","khata":"149","khasra":"83","name":"Hajira","parentage":"(D/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":788,"khewat":"66","khata":"149","khasra":"83","name":"Taslima","parentage":"(D/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":789,"khewat":"66","khata":"149","khasra":"83","name":"Daulati","parentage":"(W/o) Juma Dar Sakenin Deh","type":"OWNER"},{"sr":790,"khewat":"66","khata":"149","khasra":"83","name":"masmath raja","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":791,"khewat":"95","khata":"200","khasra":"7","name":"mohd ibrahim","parentage":"(S/o) ablu","type":"CULTIVATOR"},{"sr":792,"khewat":"95","khata":"200","khasra":"7","name":"mohd jafar","parentage":"(S/o) ablu","type":"CULTIVATOR"},{"sr":793,"khewat":"95","khata":"200","khasra":"7","name":"ghulam ahmed","parentage":"(S/o) ablu","type":"CULTIVATOR"},{"sr":794,"khewat":"95","khata":"200","khasra":"7","name":"abdul raheem","parentage":"(S/o) ablu","type":"CULTIVATOR"},{"sr":795,"khewat":"18","khata":"57","khasra":"26","name":"ashik hussain","parentage":"(S/o) ghulam qadir","type":"CULTIVATOR"},{"sr":796,"khewat":"51","khata":"116","khasra":"296/21","name":"akbar","parentage":"(S/o) juma","type":"CULTIVATOR"},{"sr":797,"khewat":"51","khata":"117","khasra":"297/21","name":"galam hasan","parentage":"(S/o) ghulam mohammad","type":"CULTIVATOR"},{"sr":798,"khewat":"73","khata":"161","khasra":"71","name":"rehman","parentage":"(S/o) mehda","type":"CULTIVATOR"},{"sr":799,"khewat":"17","khata":"54","khasra":"97/1","name":"MAKBUZA MAHKAMA IRRIGATION","parentage":"(Others) NA","type":"CULTIVATOR"},{"sr":800,"khewat":"73","khata":"159","khasra":"72","name":"KAZIM","parentage":"(S/o) MEHDA","type":"CULTIVATOR"},{"sr":801,"khewat":"102","khata":"217","khasra":"78","name":"SHARAI AAM","parentage":"(Others) NA","type":"CULTIVATOR"},{"sr":802,"khewat":"62","khata":"139","khasra":"92","name":"MASMAT MUGHLI","parentage":"(S/o) HASAN","type":"CULTIVATOR"},{"sr":803,"khewat":"62","khata":"139","khasra":"92","name":"MAKBUZA KHUD","parentage":"(Others) NA","type":"CULTIVATOR"},{"sr":804,"khewat":"58","khata":"132","khasra":"90","name":"GHULAM HAIDER","parentage":"(S/o) RAHEM","type":"CULTIVATOR"},{"sr":805,"khewat":"58","khata":"132","khasra":"90","name":"MASMAT MARYAM","parentage":"(S/o) ABLI","type":"CULTIVATOR"},{"sr":806,"khewat":"58","khata":"132","khasra":"90","name":"GHULAM RASOOL","parentage":"(S/o) ABLI","type":"CULTIVATOR"},{"sr":807,"khewat":"58","khata":"132","khasra":"90","name":"ABDUL REHMAN","parentage":"(S/o) ABLI","type":"CULTIVATOR"},{"sr":808,"khewat":"7","khata":"18","khasra":"237","name":"BASHIR AHMAD","parentage":"(S/o) GHULAM AHMAD","type":"CULTIVATOR"},{"sr":809,"khewat":"7","khata":"18","khasra":"237","name":"GULZAR AHMAD","parentage":"(S/o) GHULAM AHMAD","type":"CULTIVATOR"},{"sr":810,"khewat":"5","khata":"7","khasra":"183","name":"ghulam ahmad","parentage":"(S/o) bakir","type":"CULTIVATOR"},{"sr":811,"khewat":"7","khata":"21","khasra":"167","name":"mohammad","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":812,"khewat":"7","khata":"21","khasra":"167","name":"asghar","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":813,"khewat":"7","khata":"21","khasra":"167","name":"masmat khatji","parentage":"(S/o) ghulam","type":"CULTIVATOR"},{"sr":814,"khewat":"60","khata":"135","khasra":"25","name":"Ghulam Hassan","parentage":"(S/o) Zeba Dar Sakenin Deh","type":"OWNER"},{"sr":815,"khewat":"60","khata":"135","khasra":"25","name":"Gulzar Ahmed","parentage":"(S/o) Zeba Dar Sakenin Deh","type":"OWNER"},{"sr":816,"khewat":"60","khata":"135","khasra":"25","name":"Halima","parentage":"(D/o) Zeba Dar Sakenin Deh","type":"OWNER"},{"sr":817,"khewat":"60","khata":"135","khasra":"25","name":"Fehmida","parentage":"(D/o) Zeba Dar Sakenin Deh","type":"OWNER"},{"sr":818,"khewat":"60","khata":"135","khasra":"25","name":"Hajra","parentage":"(D/o) Zeba Dar Sakenin Deh","type":"OWNER"},{"sr":819,"khewat":"60","khata":"135","khasra":"25","name":"Afroza","parentage":"(D/o) Zeba Dar Sakenin Deh","type":"OWNER"},{"sr":820,"khewat":"60","khata":"135","khasra":"25","name":"ali mohammad","parentage":"(S/o) masmat khatooni","type":"OWNER"},{"sr":821,"khewat":"60","khata":"135","khasra":"25","name":"masmat jana","parentage":"(D/o) masmat khatooni","type":"OWNER"},{"sr":822,"khewat":"60","khata":"135","khasra":"25","name":"masmat klsumah","parentage":"(D/o) masmat khatooni","type":"OWNER"},{"sr":823,"khewat":"60","khata":"135","khasra":"25","name":"masmat mughli","parentage":"(D/o) masmat khatooni","type":"OWNER"},{"sr":824,"khewat":"60","khata":"135","khasra":"25","name":"masmath salma","parentage":"(D/o) kazim","type":"OWNER"},{"sr":825,"khewat":"60","khata":"135","khasra":"25","name":"masmath fatima","parentage":"(D/o) kazim","type":"OWNER"},{"sr":826,"khewat":"60","khata":"135","khasra":"25","name":"masmath zoona","parentage":"(D/o) kazim","type":"OWNER"},{"sr":827,"khewat":"60","khata":"135","khasra":"25","name":"masmath maryam","parentage":"(D/o) kazim","type":"OWNER"},{"sr":828,"khewat":"60","khata":"135","khasra":"25","name":"masmath posha","parentage":"(D/o) masmath jana","type":"OWNER"},{"sr":829,"khewat":"60","khata":"135","khasra":"25","name":"Ali Mohammad","parentage":"(S/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":830,"khewat":"60","khata":"135","khasra":"25","name":"Ghulam Rasool","parentage":"(S/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":831,"khewat":"60","khata":"135","khasra":"25","name":"Abdul Raheem","parentage":"(S/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":832,"khewat":"60","khata":"135","khasra":"25","name":"Mohammad Akbar","parentage":"(S/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":833,"khewat":"60","khata":"135","khasra":"25","name":"Ghulam Hussain","parentage":"(S/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":834,"khewat":"60","khata":"135","khasra":"25","name":"Raja","parentage":"(D/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":835,"khewat":"60","khata":"135","khasra":"25","name":"Kalsuma","parentage":"(W/o) Rehman Dar Sakenin Deh","type":"OWNER"},{"sr":836,"khewat":"5","khata":"8","khasra":"56","name":"ghulam hussain","parentage":"(S/o) mehda","type":"CULTIVATOR"},{"sr":837,"khewat":"5","khata":"6","khasra":"56","name":"masmat mughli","parentage":"(D/o) akbar","type":"CULTIVATOR"},{"sr":838,"khewat":"5","khata":"6","khasra":"56","name":"asad","parentage":"(S/o) akbar","type":"CULTIVATOR"},{"sr":839,"khewat":"74","khata":"162","khasra":"60","name":"mohd afzal wagiyara","parentage":"(S/o) haider","type":"OWNER"},{"sr":840,"khewat":"74","khata":"162","khasra":"60","name":"mohd ramzan wagiyara","parentage":"(S/o) ghulam","type":"OWNER"},{"sr":841,"khewat":"74","khata":"162","khasra":"60","name":"hasan wagiyara","parentage":"(S/o) farzani","type":"OWNER"},{"sr":842,"khewat":"74","khata":"162","khasra":"60","name":"masamat jani wagiyara","parentage":"(D/o) haider dar","type":"OWNER"},{"sr":843,"khewat":"86","khata":"188","khasra":"31","name":"Bashir Ahmed","parentage":"(S/o) Jafar Ganai Sakenin Deh","type":"OWNER"},{"sr":844,"khewat":"86","khata":"188","khasra":"31","name":"Fayaz Ali","parentage":"(S/o) Jafar Ganai Sakenin Deh","type":"OWNER"},{"sr":845,"khewat":"86","khata":"188","khasra":"31","name":"Mohammad Amin","parentage":"(S/o) Jafar Ganai Sakenin Deh","type":"OWNER"},{"sr":846,"khewat":"86","khata":"188","khasra":"31","name":"Zubedha","parentage":"(D/o) Jaffar Ganai Sakenin Deh","type":"OWNER"},{"sr":847,"khewat":"86","khata":"188","khasra":"31","name":"Asmat","parentage":"(D/o) Jaffar Ganai Sakenin Deh","type":"OWNER"},{"sr":848,"khewat":"86","khata":"188","khasra":"31","name":"Fazi","parentage":"(W/o) Jaffar Ganai Sakenin Deh","type":"OWNER"},{"sr":849,"khewat":"54","khata":"122","khasra":"273/9","name":"raja","parentage":"(S/o) kalsuma","type":"CULTIVATOR"},{"sr":850,"khewat":"43","khata":"102","khasra":"46","name":"sultan hisadar","parentage":"(S/o) haider","type":"CULTIVATOR"},{"sr":851,"khewat":"4","khata":"5","khasra":"82","name":"mohd afzal","parentage":"(S/o) haider","type":"BOTH"},{"sr":852,"khewat":"4","khata":"5","khasra":"82","name":"manzoor ahmed","parentage":"(S/o) haider","type":"BOTH"},{"sr":853,"khewat":"4","khata":"5","khasra":"82","name":"ali mohd","parentage":"(S/o) haider","type":"BOTH"},{"sr":854,"khewat":"4","khata":"5","khasra":"82","name":"bashir ahmed","parentage":"(S/o) haider","type":"BOTH"},{"sr":855,"khewat":"4","khata":"5","khasra":"82","name":"ghulam mohd","parentage":"(S/o) haider","type":"BOTH"},{"sr":856,"khewat":"4","khata":"5","khasra":"82","name":"mohd jafar","parentage":"(S/o) abli","type":"BOTH"},{"sr":857,"khewat":"4","khata":"5","khasra":"82","name":"mohd ibrahim","parentage":"(S/o) abli","type":"BOTH"},{"sr":858,"khewat":"4","khata":"5","khasra":"82","name":"ghulam ahmed","parentage":"(S/o) abli","type":"BOTH"},{"sr":859,"khewat":"4","khata":"5","khasra":"82","name":"abdul rahim","parentage":"(S/o) abli","type":"BOTH"},{"sr":860,"khewat":"4","khata":"5","khasra":"82","name":"ali mohd","parentage":"(S/o) kalsuma","type":"BOTH"},{"sr":861,"khewat":"4","khata":"5","khasra":"82","name":"mohd akbar","parentage":"(S/o) kalsuma","type":"BOTH"},{"sr":862,"khewat":"4","khata":"5","khasra":"82","name":"ghulam rasool","parentage":"(S/o) kalsuma","type":"BOTH"},{"sr":863,"khewat":"4","khata":"5","khasra":"82","name":"abdul raheem","parentage":"(S/o) kalsuma","type":"BOTH"},{"sr":864,"khewat":"4","khata":"5","khasra":"82","name":"ghulam hussain","parentage":"(S/o) kalsuma","type":"BOTH"},{"sr":865,"khewat":"4","khata":"5","khasra":"82","name":"raja","parentage":"(D/o) kalsuma","type":"BOTH"},{"sr":866,"khewat":"7","khata":"19","khasra":"258","name":"mohd abdulla","parentage":"(S/o) ahmed","type":"CULTIVATOR"},{"sr":867,"khewat":"7","khata":"19","khasra":"258","name":"masamat kalsuma","parentage":"(D/o) ramzan","type":"CULTIVATOR"},{"sr":868,"khewat":"7","khata":"15","khasra":"196","name":"rehman","parentage":"(S/o) mohd","type":"CULTIVATOR"},{"sr":869,"khewat":"7","khata":"15","khasra":"196","name":"haider","parentage":"(S/o) mohd","type":"CULTIVATOR"},{"sr":870,"khewat":"7","khata":"13","khasra":"196","name":"masmat fata","parentage":"(D/o) masmat khatji","type":"OWNER"},{"sr":871,"khewat":"7","khata":"13","khasra":"196","name":"masmat raja","parentage":"(D/o) masmat khatji","type":"OWNER"},{"sr":872,"khewat":"7","khata":"13","khasra":"196","name":"rehman","parentage":"(S/o) mohammad","type":"BOTH"},{"sr":873,"khewat":"7","khata":"13","khasra":"196","name":"masmat daulati","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":874,"khewat":"7","khata":"13","khasra":"196","name":"masmat zeba","parentage":"(D/o) mohammad","type":"OWNER"},{"sr":875,"khewat":"7","khata":"13","khasra":"196","name":"mehmood ali","parentage":"(S/o) abdullah","type":"OWNER"},{"sr":876,"khewat":"7","khata":"13","khasra":"196","name":"masmat klsumah","parentage":"(D/o) abdullah","type":"OWNER"},{"sr":877,"khewat":"7","khata":"13","khasra":"196","name":"gulam hasan","parentage":"(S/o) rehman","type":"OWNER"},{"sr":878,"khewat":"7","khata":"13","khasra":"196","name":"ali hussain","parentage":"(S/o) talib","type":"OWNER"},{"sr":879,"khewat":"7","khata":"13","khasra":"196","name":"zahoor hussain","parentage":"(S/o) talib","type":"OWNER"},{"sr":880,"khewat":"7","khata":"13","khasra":"196","name":"altaf hussain","parentage":"(S/o) talib","type":"OWNER"},{"sr":881,"khewat":"7","khata":"13","khasra":"196","name":"masmat shamima","parentage":"(D/o) talib","type":"OWNER"},{"sr":882,"khewat":"7","khata":"13","khasra":"196","name":"gulam","parentage":"(S/o) masmat zeba","type":"OWNER"},{"sr":883,"khewat":"7","khata":"13","khasra":"196","name":"masmat fata","parentage":"(D/o) masmat zeba","type":"OWNER"},{"sr":884,"khewat":"7","khata":"13","khasra":"196","name":"masmat fazeel","parentage":"(D/o) masmat zeba","type":"OWNER"},{"sr":885,"khewat":"7","khata":"13","khasra":"196","name":"gulam mustafa","parentage":"(S/o) raheem","type":"OWNER"},{"sr":886,"khewat":"7","khata":"13","khasra":"196","name":"latif ahmad","parentage":"(S/o) raheem","type":"OWNER"},{"sr":887,"khewat":"7","khata":"13","khasra":"196","name":"masmat gulshan","parentage":"(D/o) raheem","type":"OWNER"},{"sr":888,"khewat":"7","khata":"13","khasra":"196","name":"masmat fahhmidah","parentage":"(D/o) raheem","type":"OWNER"}];
+// ==========================================================
+
+let REASONS = [];
+let submitter = '';
+const state = {};          // sr -> {status, reason, reason_detail, submitted_by, submitted_at}
+let page = 1;
+let view = [];
+let openSr = null;
+
+const queue = new Map();   // sr -> payload waiting to be sent
+let flushTimer = null;
+let inFlight = false;
+
+// ---------- BOOT ----------
+(async function boot(){
+  try{
+    const cfg = await api({ action:'getConfig', village: VILLAGE });
+    if(!cfg.ok){ bootFail(cfg.error); return; }
+    submitter = cfg.submitter || '';
+    REASONS = cfg.reasons || [];
+    document.getElementById('submitter-name').textContent = submitter || 'Not assigned';
+    if(!submitter){
+      banner('warn','No submitter has been assigned to this village yet. '+
+        'Entries will be recorded as "Unassigned" until an administrator sets a name.');
+    }
+
+    const st = await api({ action:'fetchStatus', village: VILLAGE });
+    if(st.ok && st.filled){
+      Object.keys(st.filled).forEach(k => { state[parseInt(k,10)] = st.filled[k]; });
+    }
+
+    document.getElementById('boot').style.display='none';
+    document.getElementById('app').style.display='block';
+    bind();
+    refresh();
+  }catch(e){
+    console.error(e);
+    bootFail('Could not reach the server. Check your connection and reload.');
+  }
+})();
+
+function bootFail(msg){
+  document.getElementById('boot').innerHTML =
+    '<div class="banner err" style="text-align:left">'+esc(msg)+'</div>';
+}
+
+function banner(kind,msg){
+  const d=document.createElement('div');
+  d.className='banner '+kind; d.textContent=msg;
+  document.getElementById('app').prepend(d);
+}
+
+// ---------- RENDER ----------
+function refresh(){ applyFilter(); stats(); table(); pager(); }
+
+function stats(){
+  const total=RECORDS.length;
+  let issued=0,pending=0;
+  Object.values(state).forEach(v=>{
+    if(v.status==='Issued') issued++;
+    else if(v.status==='Pending') pending++;
+  });
+  const done=issued+pending;
+  const pct=total?Math.round(done/total*100):0;
+  set('s-total',total); set('s-issued',issued); set('s-pending',pending);
+  set('s-remaining',total-done);
+  document.getElementById('s-fill').style.width=pct+'%';
+  document.getElementById('s-text').textContent=
+    pct+'% complete — '+done.toLocaleString('en-IN')+' of '+total.toLocaleString('en-IN')+' recorded';
+}
+
+function applyFilter(){
+  const q=document.getElementById('q').value.trim().toLowerCase();
+  const f=document.getElementById('filter').value;
+  view=RECORDS.filter(r=>{
+    const s=state[r.sr];
+    if(f==='remaining' && s) return false;
+    if(f==='issued' && (!s||s.status!=='Issued')) return false;
+    if(f==='pending' && (!s||s.status!=='Pending')) return false;
+    if(f==='noreason' && (!s||s.status!=='Pending'||s.reason)) return false;
+    if(q){
+      const hay=(r.sr+' '+r.khewat+' '+r.khata+' '+r.khasra+' '+r.name+' '+r.parentage).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const maxPage=Math.max(1,Math.ceil(view.length/psize()));
+  if(page>maxPage) page=maxPage;
+}
+
+function psize(){ return parseInt(document.getElementById('psize').value,10); }
+
+function table(){
+  const tb=document.getElementById('tb');
+  const start=(page-1)*psize();
+  const rows=view.slice(start,start+psize());
+  if(!rows.length){
+    tb.innerHTML='<tr><td colspan="6" class="empty">No records match.</td></tr>';
+    return;
+  }
+  let html='';
+  rows.forEach(r=>{
+    const s=state[r.sr];
+    const st=s?s.status:'';
+    const cls = st==='Issued'?'done-issued' : st==='Pending'?'done-pending' : '';
+    const isOpen = openSr===r.sr;
+
+    let chip='';
+    if(st==='Pending'){
+      if(s.reason){
+        const txt = s.reason==='Other' ? s.reason_detail : s.reason;
+        chip='<span class="reason-chip" onclick="openRow('+r.sr+')">'+esc(txt)+' &#9998;</span>';
+      }else{
+        chip='<span class="reason-chip missing" onclick="openRow('+r.sr+')">Reason needed &#9998;</span>';
+      }
+    }
+
+    const reset = st
+      ? '<button class="rbtn" title="Clear this entry" onclick="resetRow('+r.sr+')">&#10005;</button>'
+      : '';
+
+    html+='<tr class="'+(isOpen?'open':cls)+'">'+
+      '<td class="sr">'+r.sr+'</td>'+
+      '<td class="ref hide-sm">'+esc(r.khewat)+'</td>'+
+      '<td class="ref hide-sm">'+esc(r.khata)+'</td>'+
+      '<td class="ref hide-sm">'+esc(r.khasra)+'</td>'+
+      '<td class="who">'+
+        '<span class="nm" title="'+esc(r.name)+'">'+esc(r.name)+'</span>'+
+        '<span class="meta">'+
+          '<span class="par" title="'+esc(r.parentage)+'">'+esc(r.parentage)+'</span>'+
+          '<span class="type-tag '+esc(r.type)+'">'+esc(r.type)+'</span>'+
+        '</span>'+
+        '<span class="refs">#'+r.sr+' &nbsp;·&nbsp; Khewat '+esc(r.khewat)+
+          ' &nbsp;·&nbsp; Khata '+esc(r.khata)+' &nbsp;·&nbsp; Khasra '+esc(r.khasra)+'</span>'+
+      '</td>'+
+      '<td class="act"><div class="act-row">'+
+        '<span class="seg">'+
+          '<button class="sbtn'+(st==='Issued'?' on-issued':'')+'" onclick="setIssued('+r.sr+')">Issued</button>'+
+          '<button class="sbtn'+(st==='Pending'?' on-pending':'')+'" onclick="openRow('+r.sr+')">Pending</button>'+
+        '</span>'+
+        reset+chip+
+      '</div></td></tr>';
+
+    if(isOpen) html+=expandRow(r);
+  });
+  tb.innerHTML=html;
+
+  if(openSr!==null){
+    const sel=document.getElementById('rsel');
+    if(sel) sel.focus();
+  }
+}
+
+function expandRow(r){
+  const s=state[r.sr]||{};
+  const cur=s.status==='Pending'?(s.reason||''):'';
+  const det=s.reason_detail||'';
+  let opts='<option value="">— select a reason —</option>';
+  REASONS.forEach(x=>{
+    opts+='<option value="'+esc(x)+'"'+(x===cur?' selected':'')+'>'+esc(x)+'</option>';
+  });
+  opts+='<option value="Other"'+(cur==='Other'?' selected':'')+'>Other (type below)</option>';
+
+  return '<tr class="expand"><td colspan="6"><div class="expand-inner">'+
+    '<div class="fld"><label>Reason for the pendency</label>'+
+      '<select id="rsel" onchange="onReasonChange('+r.sr+')">'+opts+'</select></div>'+
+    '<div class="fld" id="rdet-wrap" style="'+(cur==='Other'?'':'display:none')+'">'+
+      '<label>Please specify</label>'+
+      '<input type="text" id="rdet" maxlength="200" value="'+esc(det)+'" '+
+      'placeholder="Describe the reason" onkeydown="if(event.key===\'Enter\')savePending('+r.sr+')"></div>'+
+    '<button class="btn" onclick="savePending('+r.sr+')">Save</button>'+
+    '<button class="btn ghost" onclick="closeRow()">Cancel</button>'+
+    '</div></td></tr>';
+}
+
+function pager(){
+  const total=Math.max(1,Math.ceil(view.length/psize()));
+  const c=document.getElementById('pager'); c.innerHTML='';
+  const mk=(t,p,dis,act)=>{
+    const b=document.createElement('button');
+    b.textContent=t; b.disabled=!!dis;
+    if(act) b.classList.add('active');
+    b.onclick=()=>{ page=p; closeRow(); table(); pager();
+      window.scrollTo({top:0,behavior:'smooth'}); };
+    return b;
+  };
+  c.appendChild(mk('‹ Prev',page-1,page===1));
+  const from=Math.max(1,page-2), to=Math.min(total,page+2);
+  if(from>1){ c.appendChild(mk('1',1,false,false));
+    if(from>2){ const s=document.createElement('span');
+      s.textContent='…'; s.style.color='var(--muted)'; c.appendChild(s);} }
+  for(let p=from;p<=to;p++) c.appendChild(mk(String(p),p,false,p===page));
+  if(to<total){ if(to<total-1){ const s=document.createElement('span');
+      s.textContent='…'; s.style.color='var(--muted)'; c.appendChild(s);}
+    c.appendChild(mk(String(total),total,false,false)); }
+  c.appendChild(mk('Next ›',page+1,page===total));
+  const i=document.createElement('span'); i.className='info';
+  i.textContent='Page '+page+' of '+total+' · '+view.length.toLocaleString('en-IN')+' record(s)';
+  c.appendChild(i);
+}
+
+// ---------- ACTIONS ----------
+function setIssued(sr){
+  closeRow();
+  const prev=state[sr];
+  if(prev && prev.status==='Issued'){ return; }   // already issued, no-op
+  state[sr]={status:'Issued',reason:'',reason_detail:'',
+             submitted_by:submitter,submitted_at:new Date().toISOString()};
+  enqueue(sr,{sr_no:sr,status:'Issued',reason:'',reason_detail:''},prev);
+  refresh();
+}
+
+function resetRow(sr){
+  if(!state[sr]) return;
+  closeRow();
+  const prev=state[sr];
+  delete state[sr];
+  enqueue(sr,{sr_no:sr,status:'',reason:'',reason_detail:''},prev);
+  refresh();
+  toast('Sr. No. '+sr+' cleared.');
+}
+
+function openRow(sr){
+  openSr=sr;
+  applyFilter();
+  // make sure the row is on the current page
+  const idx=view.findIndex(r=>r.sr===sr);
+  if(idx>=0) page=Math.floor(idx/psize())+1;
+  table(); pager();
+}
+
+function closeRow(){ if(openSr!==null){ openSr=null; table(); } }
+
+function onReasonChange(sr){
+  const v=document.getElementById('rsel').value;
+  const w=document.getElementById('rdet-wrap');
+  if(v==='Other'){ w.style.display=''; document.getElementById('rdet').focus(); }
+  else w.style.display='none';
+}
+
+function savePending(sr){
+  const reason=document.getElementById('rsel').value;
+  const detail=(document.getElementById('rdet')||{}).value||'';
+  if(!reason){ toast('Pick a reason first.',true); return; }
+  if(reason==='Other' && !detail.trim()){
+    toast('Describe the reason in the box.',true); return; }
+
+  const prev=state[sr];
+  state[sr]={status:'Pending',reason:reason,reason_detail:detail.trim(),
+             submitted_by:submitter,submitted_at:new Date().toISOString()};
+  enqueue(sr,{sr_no:sr,status:'Pending',reason:reason,reason_detail:detail.trim()},prev);
+  openSr=null;
+  refresh();
+}
+
+// ---------- SAVE QUEUE ----------
+function enqueue(sr,payload,prev){
+  queue.set(sr,{payload:payload,prev:prev});
+  saveState('saving',queue.size+' to save…');
+  if(flushTimer) clearTimeout(flushTimer);
+  if(queue.size>=25) flush();
+  else flushTimer=setTimeout(flush,1200);
+}
+
+async function flush(){
+  if(inFlight || !queue.size) return;
+  inFlight=true;
+  if(flushTimer){ clearTimeout(flushTimer); flushTimer=null; }
+
+  const batch=Array.from(queue.entries());
+  const rows=batch.map(([,v])=>v.payload);
+  saveState('saving','Saving '+rows.length+'…');
+
+  try{
+    const res=await api({action:'save', village:VILLAGE, rows:rows});
+    if(!res.ok) throw new Error(res.error||'Save rejected');
+
+    const saved=new Set((res.saved||[]).map(Number));
+    batch.forEach(([sr,v])=>{
+      if(saved.has(sr)){
+        queue.delete(sr);
+        if(state[sr]) state[sr].submitted_by=res.submitter||submitter;
+      }else{
+        // server refused this row — roll it back
+        queue.delete(sr);
+        if(v.prev) state[sr]=v.prev; else delete state[sr];
+      }
+    });
+
+    const refused=res.skipped||[];
+    if(refused.length){
+      const first=refused[0];
+      const why=(first && first.why) ? first.why : '';
+      const sr=(first && first.sr_no!==undefined) ? first.sr_no : first;
+      toast(refused.length===1
+        ? ('Sr. No. '+sr+' not saved'+(why?' — '+why:''))
+        : (refused.length+' entries not saved'+(why?' — '+why:'')), true);
+      console.warn('Refused rows:', refused);
+    }
+
+    saveState(queue.size?'saving':'saved', queue.size? queue.size+' to save…':'All saved');
+    refresh();
+  }catch(e){
+    console.error(e);
+    saveState('error','Save failed — retrying…');
+    inFlight=false;
+    flushTimer=setTimeout(flush,4000);   // retry
+    return;
+  }
+  inFlight=false;
+  if(queue.size) flushTimer=setTimeout(flush,400);
+}
+
+function saveState(kind,text){
+  const el=document.getElementById('save-state');
+  el.className='save-state '+kind;
+  document.getElementById('save-text').textContent=text;
+}
+
+window.addEventListener('beforeunload',e=>{
+  if(queue.size){ e.preventDefault(); e.returnValue=''; }
+});
+
+// ---------- EXCEL EXPORT ----------
+let sheetJsReady = null;
+function loadSheetJs(){
+  if(sheetJsReady) return sheetJsReady;
+  sheetJsReady = new Promise((resolve,reject)=>{
+    if(window.XLSX) return resolve();
+    const el=document.createElement('script');
+    el.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    el.onload=()=>resolve();
+    el.onerror=()=>reject(new Error('Could not load the Excel library'));
+    document.head.appendChild(el);
+  });
+  return sheetJsReady;
+}
+
+async function downloadExcel(){
+  const btn=document.getElementById('dl');
+  const lbl=document.getElementById('dl-text');
+  btn.disabled=true; lbl.textContent='Preparing…';
+  try{
+    if(queue.size){ await flush(); }        // don't export stale work
+    await loadSheetJs();
+
+    // pull the latest from the sheet so other devices' entries are included
+    lbl.textContent='Fetching…';
+    try{
+      const st=await api({action:'fetchStatus', village:VILLAGE});
+      if(st.ok && st.filled){
+        Object.keys(state).forEach(k=>delete state[k]);
+        Object.keys(st.filled).forEach(k=>{ state[parseInt(k,10)]=st.filled[k]; });
+        refresh();
+      }
+    }catch(e){ console.warn('Live refresh failed, exporting local view', e); }
+
+    lbl.textContent='Building…';
+    const head=['S.NO.','KHEWAT','KHATA','KHASRA','NAME','PARENTAGE','TYPE',
+                'STATUS','REASON','REASON DETAIL','SUBMITTED BY','SUBMITTED AT'];
+    const rows=[head];
+    RECORDS.forEach(r=>{
+      const s=state[r.sr]||{};
+      rows.push([r.sr, r.khewat, r.khata, r.khasra, r.name, r.parentage, r.type,
+        s.status||'', s.reason||'', s.reason_detail||'',
+        s.submitted_by||'', s.submitted_at? fmtStamp(s.submitted_at):'']);
+    });
+
+    let issued=0,pending=0;
+    Object.values(state).forEach(v=>{ if(v.status==='Issued')issued++;
+                                      else if(v.status==='Pending')pending++; });
+    const done=issued+pending;
+
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols']=[{wch:7},{wch:9},{wch:9},{wch:11},{wch:24},{wch:20},{wch:12},
+                 {wch:11},{wch:38},{wch:32},{wch:22},{wch:20}];
+    ws['!freeze']={xSplit:1,ySplit:1};
+    XLSX.utils.book_append_sheet(wb,ws,VILLAGE.substring(0,31));
+
+    const sum=[
+      ['Farmer ID Registration Tracking'],
+      ['Village', VILLAGE],
+      ['Tehsil', TEHSIL],
+      ['Exported', new Date().toLocaleString('en-IN')],
+      [],
+      ['Total records', RECORDS.length],
+      ['Issued', issued],
+      ['Pending', pending],
+      ['Not yet done', RECORDS.length-done],
+      ['Progress', (RECORDS.length? Math.round(done/RECORDS.length*100):0)+'%'],
+      [],
+      ['Pending — by reason']
+    ];
+    const byReason={};
+    Object.values(state).forEach(v=>{
+      if(v.status!=='Pending') return;
+      const k=v.reason==='Other' ? 'Other' : (v.reason||'(no reason given)');
+      byReason[k]=(byReason[k]||0)+1;
+    });
+    Object.keys(byReason).sort((a,b)=>byReason[b]-byReason[a])
+      .forEach(k=>sum.push([k, byReason[k]]));
+    if(!Object.keys(byReason).length) sum.push(['(none yet)','']);
+
+    const ws2=XLSX.utils.aoa_to_sheet(sum);
+    ws2['!cols']=[{wch:42},{wch:26}];
+    XLSX.utils.book_append_sheet(wb,ws2,'Summary');
+
+    const stamp=new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb,'FarmerID_'+VILLAGE.replace(/[^A-Za-z0-9]+/g,'_')+'_'+stamp+'.xlsx');
+    toast('Excel downloaded — '+done+' of '+RECORDS.length+' recorded.');
+  }catch(e){
+    console.error(e);
+    toast('Download failed: '+e.message,true);
+  }finally{
+    btn.disabled=false; lbl.textContent='Download Excel';
+  }
+}
+
+function fmtStamp(iso){
+  try{ return new Date(iso).toLocaleString('en-IN'); }catch(e){ return iso; }
+}
+
+// ---------- API ----------
+async function api(payload){
+  const res=await fetch(APPS_SCRIPT_URL,{
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(payload),
+    redirect:'follow'
+  });
+  return await res.json();
+}
+
+// ---------- UTIL ----------
+function bind(){
+  document.getElementById('q').addEventListener('input',()=>{page=1;closeRow();refresh();});
+  document.getElementById('filter').addEventListener('change',()=>{page=1;closeRow();refresh();});
+  document.getElementById('psize').addEventListener('change',()=>{page=1;closeRow();refresh();});
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeRow(); });
+}
+function set(id,v){ document.getElementById(id).textContent=(v||0).toLocaleString('en-IN'); }
+function esc(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+let toastT=null;
+function toast(msg,isErr){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.toggle('err',!!isErr); t.classList.add('show');
+  if(toastT) clearTimeout(toastT);
+  toastT=setTimeout(()=>t.classList.remove('show'),2600);
+}
+</script>
+</body>
+</html>
