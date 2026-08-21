@@ -29,6 +29,30 @@ app = Flask(__name__)
 
 SNAPSHOTS_DIR = "snapshots"
 LEGACY_EXCEL = "AGRISTACK.xlsx"
+REFERENCE_PATH = "reference.xlsx"
+
+# Recognize dated snapshot filenames in two shapes:
+#   1. Our own: "2026-08-13.xlsx"     (YYYY-MM-DD)
+#   2. Government REPORT: "REPORT 21.08.2026.xlsx" or "REPORT_21_08_2026.xlsx"
+#      or "REPORT_21_08_2026__1_.xlsx" (as the file downloads with a suffix)
+_DATE_FILENAME_PATTERNS = [
+    (re.compile(r"^(\d{4})-(\d{2})-(\d{2})\.xlsx$", re.I),
+     lambda m: date(int(m.group(1)), int(m.group(2)), int(m.group(3)))),
+    (re.compile(r"^REPORT[\s_](\d{1,2})[._](\d{1,2})[._](\d{4}).*\.xlsx$", re.I),
+     lambda m: date(int(m.group(3)), int(m.group(2)), int(m.group(1)))),
+]
+
+
+def _parse_snapshot_date(filename):
+    """Return the date embedded in a snapshot filename, or None."""
+    for rx, extractor in _DATE_FILENAME_PATTERNS:
+        m = rx.match(filename)
+        if m:
+            try:
+                return extractor(m)
+            except ValueError:
+                return None
+    return None
 
 # Tehsil -> Sub-Division (stable mapping; used because the SUB DIVISION column in source
 # files has been unreliable — sometimes text, sometimes numbers). If any tehsil hierarchy
@@ -67,18 +91,16 @@ OPTIONAL_MATCHERS = {
 # ---------- Snapshot discovery ----------
 
 def all_snapshots():
-    """Return [(date, path), ...] newest first."""
+    """Return [(date, path), ...] newest first. Accepts both YYYY-MM-DD.xlsx
+    and REPORT DD.MM.YYYY.xlsx filename styles."""
     out = []
     if os.path.isdir(SNAPSHOTS_DIR):
         for name in os.listdir(SNAPSHOTS_DIR):
-            if not name.endswith(".xlsx") or name.startswith("~"):
+            if not name.lower().endswith(".xlsx") or name.startswith("~"):
                 continue
-            stem = name[:-5]
-            try:
-                d = datetime.strptime(stem, "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            out.append((d, os.path.join(SNAPSHOTS_DIR, name)))
+            d = _parse_snapshot_date(name)
+            if d:
+                out.append((d, os.path.join(SNAPSHOTS_DIR, name)))
     if not out and os.path.exists(LEGACY_EXCEL):
         mtime = os.path.getmtime(LEGACY_EXCEL)
         out.append((datetime.fromtimestamp(mtime).date(), LEGACY_EXCEL))
@@ -147,38 +169,175 @@ def _detect_columns(df):
     return cols
 
 
-def load_snapshot(path):
-    if path in _df_cache:
-        return _df_cache[path]
-    xl = pd.ExcelFile(path)
+def _is_report_format(df_columns):
+    """Detect the government REPORT format: has 'Total' + workflow stages but
+    lacks patwari/checker/TOTAL KHASRAS columns."""
+    cols_lower = [str(c).strip().lower() for c in df_columns]
+    has_report_total = "total" in cols_lower and not any("total khasra" in c or "total survey" in c for c in cols_lower)
+    has_report_stages = "submitted" in cols_lower and "verified" in cols_lower and "approved" in cols_lower
+    has_patwari = any("patwari" in c for c in cols_lower)
+    has_workload = any("total khasra" in c or "total survey" in c for c in cols_lower)
+    return has_report_total and has_report_stages and not has_patwari and not has_workload
+
+
+_reference_cache = {}
+
+
+def load_reference():
+    """Read reference.xlsx and return a DataFrame with static columns:
+    tehsil, village, patwari, checker, khasras. Returns None if no reference
+    file exists. Cache is keyed on file mtime so live edits invalidate."""
+    if not os.path.exists(REFERENCE_PATH):
+        return None
+    mtime = os.path.getmtime(REFERENCE_PATH)
+    cache_key = (REFERENCE_PATH, mtime)
+    if cache_key in _reference_cache:
+        return _reference_cache[cache_key]
+    xl = pd.ExcelFile(REFERENCE_PATH)
     sheet = _pick_sheet(xl)
     df = pd.read_excel(xl, sheet_name=sheet)
     cols = _detect_columns(df)
+    # Extract only the static columns needed for merge
+    result = pd.DataFrame({
+        "tehsil": df[cols["tehsil"]].astype(str).str.strip().str.upper(),
+        "village": df[cols["village"]].astype(str).str.strip(),
+        "patwari": df[cols["patwari"]].astype(str).str.strip().replace({"nan": "", "None": ""}),
+        "khasras": pd.to_numeric(df[cols["khasras"]], errors="coerce").fillna(0).astype(int),
+        "checker": df[cols["checker"]].astype(str).str.strip().replace({"nan": "", "None": ""}) if "checker" in cols else "",
+    })
+    result = result[(result["village"] != "") & (result["village"].str.lower() != "nan")]
+    print(f"[reference] Loaded {len(result)} villages from {REFERENCE_PATH}", file=sys.stderr)
+    _reference_cache[cache_key] = result
+    return result
 
-    # Build the working DataFrame by extracting each column using its ORIGINAL name,
-    # then assigning under its logical name. This avoids collisions when the file has
-    # both "Total Submitted" (which we want as 'submitted') and the file's own
-    # workflow-stage column also named "submitted" — pd.DataFrame.rename would leave
-    # two columns with the same target name.
-    new_df = pd.DataFrame()
-    for logical in ("tehsil", "village", "patwari", "khasras", "submitted"):
-        new_df[logical] = df[cols[logical]].values
-    for opt in ("checker", "approved", "verified", "seek_clarification"):
-        if opt in cols:
-            new_df[opt] = df[cols[opt]].values
 
-    # Numeric coercion
+def _load_report_and_merge(path):
+    """Load a REPORT-format file, merge with reference, and return the
+    standardized DataFrame."""
+    ref = load_reference()
+    if ref is None:
+        raise RuntimeError(
+            f"Snapshot '{os.path.basename(path)}' is in REPORT format (no patwari/khasras "
+            f"columns) but no reference.xlsx was found in the repo root. Please upload "
+            f"reference.xlsx containing tehsil, village, patwari, checker, and TOTAL KHASRAS."
+        )
+    xl = pd.ExcelFile(path)
+    sheet = _pick_sheet(xl)
+    raw = pd.read_excel(xl, sheet_name=sheet)
+    # REPORT format has a blank first row (all NaN) — drop it and any similar
+    key_cols = [c for c in raw.columns if str(c).strip().lower() in ("tehsil", "village")]
+    if key_cols:
+        raw = raw.dropna(subset=key_cols)
+
+    # Column lookup, case-insensitive
+    def find(names):
+        for c in raw.columns:
+            if str(c).strip().lower() in [n.lower() for n in names]:
+                return c
+        return None
+    c_tehsil = find(["tehsil"])
+    c_village = find(["village"])
+    c_submitted = find(["submitted"])                 # workflow stage (in-queue)
+    c_seek = find(["seek clarification"])
+    c_resub = find(["re submitted", "resubmitted"])
+    c_verified = find(["verified"])
+    c_approved = find(["approved"])
+
+    if not all([c_tehsil, c_village, c_verified, c_approved]):
+        raise RuntimeError("REPORT file is missing required columns (Tehsil/Village/Verified/Approved).")
+
+    # Compute Total Submitted = sum of workflow stages (this is what our dashboard calls "submitted")
+    def _num(col):
+        return pd.to_numeric(raw[col], errors="coerce").fillna(0).astype(int) if col else pd.Series(0, index=raw.index, dtype=int)
+
+    stage_submitted = _num(c_submitted)
+    stage_seek = _num(c_seek)
+    stage_resub = _num(c_resub)
+    stage_verified = _num(c_verified)
+    stage_approved = _num(c_approved)
+    total_submitted = stage_submitted + stage_seek + stage_resub + stage_verified + stage_approved
+
+    rpt = pd.DataFrame({
+        "tehsil_key": raw[c_tehsil].astype(str).str.strip().str.upper(),
+        "village_key": raw[c_village].astype(str).str.strip(),
+        "submitted": total_submitted,
+        "seek_clarification": stage_seek,
+        "verified": stage_verified,
+        "approved": stage_approved,
+    })
+
+    # Strict merge on (tehsil_key, village_key)
+    ref_keyed = ref.copy()
+    ref_keyed["tehsil_key"] = ref_keyed["tehsil"]  # already uppercased in load_reference
+    ref_keyed["village_key"] = ref_keyed["village"]
+    merged = rpt.merge(
+        ref_keyed[["tehsil_key", "village_key", "tehsil", "village", "patwari", "checker", "khasras"]],
+        on=["tehsil_key", "village_key"],
+        how="left",
+        indicator=True,
+    )
+    unmatched_rpt = merged[merged["_merge"] == "left_only"]
+    if len(unmatched_rpt):
+        rows = [f"  - {r['tehsil_key']} / {r['village_key']}" for _, r in unmatched_rpt.head(20).iterrows()]
+        print(f"[reference-merge] WARNING: {len(unmatched_rpt)} REPORT rows have no match in reference:\n"
+              + "\n".join(rows), file=sys.stderr)
+    # Also check for reference villages missing from REPORT (optional info)
+    ref_only = ref_keyed.merge(
+        rpt[["tehsil_key", "village_key"]], on=["tehsil_key", "village_key"], how="left", indicator=True
+    )
+    ref_only = ref_only[ref_only["_merge"] == "left_only"]
+    if len(ref_only):
+        print(f"[reference-merge] Note: {len(ref_only)} villages in reference not present in this REPORT "
+              f"(will show as 0 activity).", file=sys.stderr)
+
+    # Keep only matched rows for the dashboard; use REPORT numbers + reference static info
+    ok = merged[merged["_merge"] == "both"].copy()
+    result = pd.DataFrame({
+        "tehsil": ok["tehsil"],   # canonical casing from reference
+        "village": ok["village"],
+        "patwari": ok["patwari"],
+        "khasras": ok["khasras"],
+        "submitted": ok["submitted"],
+        "checker": ok["checker"],
+        "approved": ok["approved"],
+        "verified": ok["verified"],
+        "seek_clarification": ok["seek_clarification"],
+    })
+    return result
+
+
+def load_snapshot(path):
+    if path in _df_cache:
+        return _df_cache[path]
+
+    # Peek at columns to decide format
+    xl = pd.ExcelFile(path)
+    sheet = _pick_sheet(xl)
+    peek = pd.read_excel(xl, sheet_name=sheet, nrows=1)
+    if _is_report_format(peek.columns):
+        # REPORT format — merge with reference
+        new_df = _load_report_and_merge(path)
+    else:
+        # Full format — existing behavior
+        df = pd.read_excel(xl, sheet_name=sheet)
+        cols = _detect_columns(df)
+        new_df = pd.DataFrame()
+        for logical in ("tehsil", "village", "patwari", "khasras", "submitted"):
+            new_df[logical] = df[cols[logical]].values
+        for opt in ("checker", "approved", "verified", "seek_clarification"):
+            if opt in cols:
+                new_df[opt] = df[cols[opt]].values
+
+    # Numeric coercion + string cleanup (common to both formats)
     for numcol in ("khasras", "submitted", "approved", "verified", "seek_clarification"):
         if numcol in new_df.columns:
             new_df[numcol] = pd.to_numeric(new_df[numcol], errors="coerce").fillna(0).astype(int)
         else:
             new_df[numcol] = 0
-    # String cleanup
     for scol in ("tehsil", "village", "patwari", "checker"):
         if scol in new_df.columns:
             new_df[scol] = new_df[scol].astype(str).str.strip().replace({"nan": "", "NaN": "", "None": ""})
     new_df = new_df[(new_df["village"] != "") & (new_df["village"].str.lower() != "nan")]
-    # Derive sub-division from tehsil
     new_df["subdivision"] = new_df["tehsil"].str.upper().map(TEHSIL_TO_SUBDIV).fillna("UNKNOWN")
     _df_cache[path] = new_df
     return new_df
