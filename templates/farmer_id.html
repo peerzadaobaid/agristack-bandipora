@@ -101,6 +101,10 @@ tbody tr.clickable td:last-child::after {
 .pct-medium { background: #ffc107; }
 .pct-low { background: #dc3545; }
 .pct-zero { background: #ced4da; }
+/* Fixed-hue variants: one distinct colour per % column in the tehsil table. */
+.pct-fixed-blue   { background: #1e88e5; }
+.pct-fixed-orange { background: #f57c00; }
+.pct-fixed-green  { background: #43a047; }
 .pct-value { display: inline-block; min-width: 42px; font-variant-numeric: tabular-nums; }
 .totals-row { background: #d9e1f2; font-weight: 700; }
 .totals-row td { border-bottom: none; }
@@ -198,7 +202,7 @@ footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
   <div id="viewTehsil" class="view">
     <div class="panel">
       <div class="panel-header">
-        <h2>Tehsil-wise Progress <small style="color:#888;font-weight:400;font-size:12px;margin-left:6px">Click any row to see village details</small><br><small style="color:#666;font-weight:400;font-size:11px">Issue % = Issued ÷ Target &nbsp;·&nbsp; Approval % = Approved ÷ Issued (approver progress)</small></h2>
+        <h2>Tehsil-wise Progress <small style="color:#888;font-weight:400;font-size:12px;margin-left:6px">Click any row to see village details</small><br><small style="color:#666;font-weight:400;font-size:11px"><span style="color:#1e88e5;font-weight:600">■</span> %age of Survey Nos Bucketed = Bucketed ÷ Total Survey Nos &nbsp;·&nbsp; <span style="color:#f57c00;font-weight:600">■</span> Issue % = Issued Farmer IDs ÷ Target &nbsp;·&nbsp; <span style="color:#43a047;font-weight:600">■</span> Approval % = Approved ÷ Issued Farmer IDs</small></h2>
         <span class="badge" id="tehsilCount"></span>
       </div>
       <div class="table-wrap">
@@ -207,9 +211,13 @@ footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
             <tr>
               <th>#</th>
               <th>Tehsil</th>
-              <th class="num">Villages</th>
-              <th class="num">Target</th>
-              <th class="num">Issued</th>
+              <th class="num" style="white-space:normal;max-width:70px">Total Villages</th>
+              <th class="num" style="white-space:normal;max-width:80px">Villages Bucketed</th>
+              <th class="num" style="white-space:normal;max-width:90px">Total Survey Nos</th>
+              <th class="num" style="white-space:normal;max-width:95px">Bucketed Survey Nos</th>
+              <th style="white-space:normal;max-width:110px">%age of Survey Nos Bucketed</th>
+              <th class="num" style="white-space:normal;max-width:120px">Target of Farmer IDs to be Generated</th>
+              <th class="num" style="white-space:normal;max-width:95px">Issued Farmer IDs</th>
               <th class="num">Approved</th>
               <th>Issue %</th>
               <th>Approval %</th>
@@ -269,7 +277,7 @@ footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
 <footer>Bandipora Farmer Enrollment Dashboard · Data as of <span id="footerDate"></span></footer>
 
 <script>
-const DATA = {"generated":"2026-08-21T16:02:31.346Z","tehsils":[{"tehsil":"Sonawari","target":3610,"issued":1414,"approved":378,"villages":[{"village":"Gund i Nowgam","target":838,"issued":396,"approved":76},{"village":"Malik Pora","target":410,"issued":151,"approved":42},{"village":"Najin","target":616,"issued":189,"approved":61},{"village":"Zal Pora","target":853,"issued":232,"approved":107},{"village":"Gaad Khud","target":893,"issued":194,"approved":0},{"village":"Chewa","target":0,"issued":162,"approved":67},{"village":"Shilvat","target":0,"issued":90,"approved":25}]},{"tehsil":"Tulail","target":1254,"issued":485,"approved":269,"villages":[{"village":"Wazirthal","target":121,"issued":58,"approved":50},{"village":"Manz Gund","target":203,"issued":80,"approved":36},{"village":"Puranatulail","target":247,"issued":91,"approved":59},{"village":"Abdullian","target":258,"issued":70,"approved":19},{"village":"Kilshay Payeen","target":425,"issued":83,"approved":25},{"village":"Hussangam","target":0,"issued":103,"approved":80}]},{"tehsil":"Hajin","target":703,"issued":245,"approved":162,"villages":[{"village":"Gund-i-Ramzan","target":10,"issued":7,"approved":6},{"village":"Tangpora","target":242,"issued":105,"approved":88},{"village":"Gund-i-Balkh","target":430,"issued":132,"approved":67},{"village":"Gulabwari","target":21,"issued":1,"approved":1}]},{"tehsil":"Gurez","target":665,"issued":190,"approved":157,"villages":[{"village":"Koragbal","target":123,"issued":59,"approved":50},{"village":"Mastan Khopri","target":542,"issued":131,"approved":107}]},{"tehsil":"Bandipora","target":6258,"issued":1395,"approved":151,"villages":[{"village":"Labkachal","target":136,"issued":55,"approved":13},{"village":"Dachigam","target":204,"issued":76,"approved":1},{"village":"Shamthan","target":248,"issued":86,"approved":3},{"village":"Chak Arsala Khan","target":638,"issued":195,"approved":67},{"village":"Kharpora","target":553,"issued":143,"approved":13},{"village":"Chak Reshipora","target":235,"issued":59,"approved":6},{"village":"Weven","target":560,"issued":138,"approved":10},{"village":"Chandaji","target":279,"issued":63,"approved":7},{"village":"Brar","target":1100,"issued":229,"approved":23},{"village":"Takiya Ahmad Shah","target":551,"issued":108,"approved":6},{"village":"Papachan","target":514,"issued":79,"approved":1},{"village":"Chuntimulla","target":1240,"issued":164,"approved":1}]},{"tehsil":"Ajas","target":990,"issued":178,"approved":121,"villages":[{"village":"S.K. Payeen","target":990,"issued":178,"approved":121}]}]};
+const DATA = {"generated":"2026-08-22T11:40:52.576Z","tehsils":[{"tehsil":"SUMBAL","target":6740,"issued":1595,"approved":413,"villagesBucketed":7,"bucketed":3911,"totalVillages":21,"totalSurveyNos":33624,"villages":[{"village":"Gund i Nowgam","target":838,"issued":396,"approved":82},{"village":"Malik Pora","target":410,"issued":156,"approved":42},{"village":"Najin","target":616,"issued":198,"approved":61},{"village":"Zal Pora","target":853,"issued":254,"approved":111},{"village":"Gaad Khud","target":893,"issued":222,"approved":7},{"village":"Shilvat ","target":994,"issued":122,"approved":27},{"village":"Chewa","target":2136,"issued":247,"approved":83}]},{"tehsil":"BANDIPORA","target":6258,"issued":1499,"approved":174,"villagesBucketed":12,"bucketed":7112,"totalVillages":43,"totalSurveyNos":72131,"villages":[{"village":"Dachigam","target":204,"issued":90,"approved":5},{"village":"Labkachal","target":136,"issued":57,"approved":13},{"village":"Shamthan","target":248,"issued":86,"approved":3},{"village":"Chak Arsala Khan","target":638,"issued":202,"approved":72},{"village":"Kharpora","target":553,"issued":156,"approved":19},{"village":"Chak Reshipora","target":235,"issued":59,"approved":6},{"village":"Weven","target":560,"issued":139,"approved":11},{"village":"Chandaji","target":279,"issued":67,"approved":7},{"village":"Brar","target":1100,"issued":241,"approved":26},{"village":"Takiya Ahmad Shah","target":551,"issued":115,"approved":8},{"village":"Chuntimulla","target":1240,"issued":204,"approved":3},{"village":"Papachan","target":514,"issued":83,"approved":1}]},{"tehsil":"TULAIL","target":1579,"issued":525,"approved":317,"villagesBucketed":6,"bucketed":1548,"totalVillages":18,"totalSurveyNos":8036,"villages":[{"village":"Wazirthal","target":121,"issued":58,"approved":50},{"village":"Manz Gund","target":203,"issued":89,"approved":47},{"village":"Puranatulail","target":247,"issued":98,"approved":60},{"village":"Hussangam","target":325,"issued":121,"approved":110},{"village":"Abdullian","target":258,"issued":70,"approved":19},{"village":"Kilshay Payeen","target":425,"issued":89,"approved":31}]},{"tehsil":"HAJIN","target":703,"issued":247,"approved":174,"villagesBucketed":4,"bucketed":422,"totalVillages":24,"totalSurveyNos":39356,"villages":[{"village":"Gund-i-Ramzan","target":10,"issued":7,"approved":6},{"village":"Tangpora","target":242,"issued":105,"approved":88},{"village":"Gund-i-Balkh","target":430,"issued":134,"approved":79},{"village":"Gulabwari","target":21,"issued":1,"approved":1}]},{"tehsil":"AJAS","target":990,"issued":204,"approved":136,"villagesBucketed":1,"bucketed":382,"totalVillages":3,"totalSurveyNos":6853,"villages":[{"village":"S.K. Payeen","target":990,"issued":204,"approved":136}]},{"tehsil":"GUREZ","target":665,"issued":201,"approved":177,"villagesBucketed":2,"bucketed":777,"totalVillages":9,"totalSurveyNos":10808,"villages":[{"village":"Koragbal","target":123,"issued":59,"approved":55},{"village":"Mastan Khopri","target":542,"issued":142,"approved":122}]},{"tehsil":"ALOOSA","target":0,"issued":0,"approved":0,"villagesBucketed":0,"bucketed":0,"totalVillages":6,"totalSurveyNos":22421,"villages":[]}]};
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
@@ -282,11 +290,16 @@ function pctClass(pct) {
   return 'pct-good';
 }
 
-function pctBar(num, den) {
+var FIXED_PCT_COLORS = { blue: '#1e88e5', orange: '#f57c00', green: '#43a047' };
+
+function pctBar(num, den, colorOverride) {
   var pct = den > 0 ? Math.round(num / den * 100) : 0;
-  var cls = pctClass(pct);
+  var cls = colorOverride ? ('pct-fixed-' + colorOverride) : pctClass(pct);
+  var textStyle = colorOverride && FIXED_PCT_COLORS[colorOverride]
+    ? ' style="color:' + FIXED_PCT_COLORS[colorOverride] + ';font-weight:600"'
+    : '';
   var w = Math.min(pct, 100);
-  return '<span class="progress"><span class="progress-fill ' + cls + '" style="width:' + w + '%"></span></span><span class="pct-value">' + pct + '%</span>';
+  return '<span class="progress"><span class="progress-fill ' + cls + '" style="width:' + w + '%"></span></span><span class="pct-value"' + textStyle + '>' + pct + '%</span>';
 }
 
 function sumBy(arr, f) { return arr.reduce(function(s,x){return s+f(x);}, 0); }
@@ -312,33 +325,48 @@ function renderTehsils() {
   for (var i = 0; i < DATA.tehsils.length; i++) {
     var t = DATA.tehsils[i];
     var safe = t.tehsil.replace(/'/g, "\\'");
+    var totVillagesCell = t.totalVillages > 0 ? t.totalVillages : '—';
+    var totSurveyCell = t.totalSurveyNos > 0 ? t.totalSurveyNos.toLocaleString() : '—';
+    var bucketedCell = t.bucketed ? t.bucketed.toLocaleString() : '0';
+    var pctBucketedCell = t.totalSurveyNos > 0 ? pctBar(t.bucketed, t.totalSurveyNos, 'blue') : '—';
     body += '<tr class="clickable" onclick="showVillages(\'' + safe + '\')">' +
       '<td>' + (i+1) + '</td>' +
       '<td><strong>' + escapeHtml(t.tehsil) + '</strong></td>' +
-      '<td class="num">' + t.villages.length + '</td>' +
+      '<td class="num">' + totVillagesCell + '</td>' +
+      '<td class="num">' + t.villagesBucketed + '</td>' +
+      '<td class="num">' + totSurveyCell + '</td>' +
+      '<td class="num">' + bucketedCell + '</td>' +
+      '<td>' + pctBucketedCell + '</td>' +
       '<td class="num">' + t.target.toLocaleString() + '</td>' +
       '<td class="num">' + t.issued.toLocaleString() + '</td>' +
       '<td class="num">' + t.approved.toLocaleString() + '</td>' +
-      '<td>' + pctBar(t.issued, t.target) + '</td>' +
-      '<td>' + pctBar(t.approved, t.issued) + '</td>' +
+      '<td>' + pctBar(t.issued, t.target, 'orange') + '</td>' +
+      '<td>' + pctBar(t.approved, t.issued, 'green') + '</td>' +
       '<td></td>' +
       '</tr>';
   }
-  var totalTarget = sumBy(DATA.tehsils, function(t){return t.target;});
-  var totalIssued = sumBy(DATA.tehsils, function(t){return t.issued;});
-  var totalApproved = sumBy(DATA.tehsils, function(t){return t.approved;});
-  var totalVillages = sumBy(DATA.tehsils, function(t){return t.villages.length;});
+  var totalTarget       = sumBy(DATA.tehsils, function(t){return t.target;});
+  var totalIssued       = sumBy(DATA.tehsils, function(t){return t.issued;});
+  var totalApproved     = sumBy(DATA.tehsils, function(t){return t.approved;});
+  var totalVillagesRef  = sumBy(DATA.tehsils, function(t){return t.totalVillages;});
+  var totalVillagesBkt  = sumBy(DATA.tehsils, function(t){return t.villagesBucketed;});
+  var totalSurveyNosRef = sumBy(DATA.tehsils, function(t){return t.totalSurveyNos;});
+  var totalBucketed     = sumBy(DATA.tehsils, function(t){return t.bucketed;});
 
   document.querySelector('#tehsilTable tbody').innerHTML = body;
   document.querySelector('#tehsilTable tfoot').innerHTML =
     '<tr class="totals-row">' +
     '<td colspan="2">TOTAL</td>' +
-    '<td class="num">' + totalVillages + '</td>' +
+    '<td class="num">' + totalVillagesRef.toLocaleString() + '</td>' +
+    '<td class="num">' + totalVillagesBkt.toLocaleString() + '</td>' +
+    '<td class="num">' + totalSurveyNosRef.toLocaleString() + '</td>' +
+    '<td class="num">' + totalBucketed.toLocaleString() + '</td>' +
+    '<td>' + pctBar(totalBucketed, totalSurveyNosRef, 'blue') + '</td>' +
     '<td class="num">' + totalTarget.toLocaleString() + '</td>' +
     '<td class="num">' + totalIssued.toLocaleString() + '</td>' +
     '<td class="num">' + totalApproved.toLocaleString() + '</td>' +
-    '<td>' + pctBar(totalIssued, totalTarget) + '</td>' +
-    '<td>' + pctBar(totalApproved, totalIssued) + '</td>' +
+    '<td>' + pctBar(totalIssued, totalTarget, 'orange') + '</td>' +
+    '<td>' + pctBar(totalApproved, totalIssued, 'green') + '</td>' +
     '<td></td>' +
     '</tr>';
   document.getElementById('tehsilCount').textContent = DATA.tehsils.length + ' tehsils';
