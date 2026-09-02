@@ -389,6 +389,7 @@
           <tr>
             <th style="width:55px">S.NO</th>
             <th style="width:180px">Name of Patwari</th>
+            <th style="width:110px">Tehsil</th>
             <th>Villages</th>
             <th style="width:130px">Total Survey Nos</th>
             <th style="width:110px">Submitted</th>
@@ -402,6 +403,7 @@
           <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}>
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.patwari }}</td>
+            <td>{{ row.tehsil }}</td>
             <td class="villages">{{ row.villages_list }}</td>
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
@@ -418,6 +420,7 @@
           <tr>
             <td></td>
             <td>TOTAL{% if coloring_active %} (Filtered){% endif %}</td>
+            <td></td>
             <td></td>
             {% if coloring_active and patwari_totals %}
               <td class="num">{{ "{:,}".format(patwari_totals.total) }}</td>

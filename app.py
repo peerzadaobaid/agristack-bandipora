@@ -438,6 +438,7 @@ def build_views(current_df, from_df=None, tehsils_filter=None):
 
     p = (p_source.groupby("patwari", as_index=False)
                  .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
+                      tehsils=("tehsil", lambda s: " / ".join(sorted(set(s)))),
                       total=("khasras", "sum"),
                       submitted=("submitted", "sum")))
     p["pct"] = p.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
@@ -451,6 +452,7 @@ def build_views(current_df, from_df=None, tehsils_filter=None):
     def _p_records(frame):
         return [{
             "patwari": r["patwari"],
+            "tehsil": r["tehsils"],
             "villages_list": r["villages_list"],
             "total": int(r["total"]),
             "submitted": int(r["submitted"]),
@@ -985,21 +987,21 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
             continue
         show_effort = (key == "patwari-pct")
         ws = wb.create_sheet(title)
-        headers = ["S.NO", "NAME OF PATWARI", "VILLAGES", "TOTAL SURVEY NOS",
+        headers = ["S.NO", "NAME OF PATWARI", "TEHSIL", "VILLAGES", "TOTAL SURVEY NOS",
                    "SUBMITTED", "% COMPLETION"]
         if show_effort:
             headers.append("RELATIVE EFFORT")
         if additions_hdr:
             headers.append(additions_hdr)
         write_hdr(ws, headers)
-        effort_col = 7 if show_effort else None
+        effort_col = 8 if show_effort else None
         additions_col = len(headers) if additions_hdr else None
         total_cols = len(headers)
         for i, row in enumerate(rows, start=1):
             r = i + 1
-            vals = [i, row["patwari"], row["villages_list"], row["total"],
+            vals = [i, row["patwari"], row["tehsil"], row["villages_list"], row["total"],
                     row["submitted"], round(row["pct"], 2)]
-            aligns = [center, left, left, center, center, center]
+            aligns = [center, left, left, left, center, center, center]
             if show_effort:
                 re_v = row.get("relative_effort")
                 vals.append(round(re_v, 2) if re_v is not None else "—")
@@ -1010,8 +1012,8 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
                 c.alignment = a; c.font = body_font; c.border = border
-                if ci in (4, 5): c.number_format = "#,##0"
-                if ci == 6: c.number_format = '0.00"%"'
+                if ci in (5, 6): c.number_format = "#,##0"
+                if ci == 7: c.number_format = '0.00"%"'
                 if effort_col and ci == effort_col and isinstance(v, (int, float)):
                     c.number_format = '0.00"%"'
                 if additions_col and ci == additions_col and isinstance(v, int):
@@ -1023,26 +1025,26 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
         use_filtered = pt_tot is not None and any(r.get("band") for r in rows)
         ws.cell(row=pt, column=2, value=("TOTAL (Filtered)" if use_filtered else "TOTAL")).alignment = left
         if use_filtered:
-            ws.cell(row=pt, column=4, value=pt_tot["total"]).alignment = center
-            ws.cell(row=pt, column=5, value=pt_tot["submitted"]).alignment = center
-            ws.cell(row=pt, column=6, value=round(pt_tot["pct"], 2)).alignment = center
+            ws.cell(row=pt, column=5, value=pt_tot["total"]).alignment = center
+            ws.cell(row=pt, column=6, value=pt_tot["submitted"]).alignment = center
+            ws.cell(row=pt, column=7, value=round(pt_tot["pct"], 2)).alignment = center
             if additions_col:
                 ws.cell(row=pt, column=additions_col, value=pt_tot["additions"] if pt_tot["additions"] is not None else "—").alignment = center
         else:
-            ws.cell(row=pt, column=4, value=grand["total_khasras"]).alignment = center
-            ws.cell(row=pt, column=5, value=grand["submitted"]).alignment = center
-            ws.cell(row=pt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
+            ws.cell(row=pt, column=5, value=grand["total_khasras"]).alignment = center
+            ws.cell(row=pt, column=6, value=grand["submitted"]).alignment = center
+            ws.cell(row=pt, column=7, value=round(grand["overall_pct"], 2)).alignment = center
             if additions_col:
                 ws.cell(row=pt, column=additions_col, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
         for c in range(1, total_cols + 1):
             cc = ws.cell(row=pt, column=c)
             cc.font = tot_font; cc.fill = tot_fill; cc.border = border
-            if c in (4, 5): cc.number_format = "#,##0"
-            if c == 6: cc.number_format = '0.00"%"'
+            if c in (5, 6): cc.number_format = "#,##0"
+            if c == 7: cc.number_format = '0.00"%"'
             if show_effort and c == effort_col: cc.number_format = '0.00"%"'
             if additions_col and c == additions_col and isinstance(cc.value, int):
                 cc.number_format = "+#,##0;-#,##0;0"
-        widths = [7, 26, 50, 18, 14, 14]
+        widths = [7, 26, 14, 50, 18, 14, 14]
         if show_effort: widths.append(16)
         if additions_hdr: widths.append(22)
         for i, w in enumerate(widths, start=1):

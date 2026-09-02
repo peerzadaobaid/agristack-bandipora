@@ -123,15 +123,17 @@
   {% endif %}
   <table>
     <thead><tr>
-      <th style="width:5%">S.NO</th><th style="width:18%">Name of Patwari</th><th>Villages</th>
-      <th style="width:11%">Total Survey Nos</th><th style="width:9%">Submitted</th>
-      <th style="width:10%">% Completion</th>
-      {% if show_effort %}<th style="width:10%">Relative Effort</th>{% endif %}
-      {% if has_additions %}<th style="width:12%">{{ additions_label }}</th>{% endif %}
+      <th style="width:5%">S.NO</th><th style="width:16%">Name of Patwari</th><th style="width:9%">Tehsil</th>
+      <th>Villages</th>
+      <th style="width:10%">Total Survey Nos</th><th style="width:8%">Submitted</th>
+      <th style="width:9%">% Completion</th>
+      {% if show_effort %}<th style="width:9%">Relative Effort</th>{% endif %}
+      {% if has_additions %}<th style="width:11%">{{ additions_label }}</th>{% endif %}
     </tr></thead>
     <tbody>
     {% for row in panel.rows %}
       <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}><td class="center">{{ loop.index }}</td><td>{{ row.patwari }}</td>
+      <td>{{ row.tehsil }}</td>
       <td class="villages">{{ row.villages_list }}</td>
       <td class="num">{{ "{:,}".format(row.total) }}</td>
       <td class="num">{{ "{:,}".format(row.submitted) }}</td>
@@ -144,7 +146,7 @@
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><td></td><td>TOTAL</td><td></td>
+    <tfoot><tr><td></td><td>TOTAL</td><td></td><td></td>
       {% if panel.totals %}
         <td class="num">{{ "{:,}".format(panel.totals.total) }}</td>
         <td class="num">{{ "{:,}".format(panel.totals.submitted) }}</td>
