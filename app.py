@@ -1020,17 +1020,23 @@ def index():
     if not snapshots:
         return "No snapshots found. Add a file to snapshots/ folder.", 500
 
+    # Mode: 'default' (current view) or 'target' (target based view)
+    mode = request.args.get("mode", "default").strip().lower()
+    if mode not in ("default", "target"):
+        mode = "default"
+
     from_date, to_date = resolve_dates(snapshots, request.args.get("from"), request.args.get("to"))
     current_df = load_snapshot(snapshot_for_date(snapshots, to_date))
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
     tehsils_filter = parse_tehsils_param(request.args)
     views = build_views(current_df, from_df, tehsils_filter)
 
-    # Target Based view — loads plan file + baseline snapshot; may be None if plan missing
+    # Target Based view — only computed when explicitly requested (saves memory)
     plan_df = load_plan_file()
+    plan_available = plan_df is not None
     target_view = None
     baseline_info = None
-    if plan_df is not None:
+    if mode == "target" and plan_available:
         baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE)
         baseline_df = None
         if baseline:
@@ -1063,6 +1069,8 @@ def index():
         is_all_selected=is_all_selected,
         selected_tehsils=selected_tehsils,
         coloring_active=(tehsils_filter is not None),
+        mode=mode,
+        plan_available=plan_available,
         target_view=target_view,
         baseline_info=baseline_info,
         target_deadline=DEADLINE_DATE,
