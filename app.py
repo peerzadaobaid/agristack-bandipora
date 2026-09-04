@@ -31,6 +31,22 @@ SNAPSHOTS_DIR = "snapshots"
 LEGACY_EXCEL = "AGRISTACK.xlsx"
 REFERENCE_PATH = "reference.xlsx"
 
+# Target Based view configuration
+DEADLINE_DATE = date(2026, 9, 30)          # District-wide plan deadline
+PLAN_START_DATE = date(2026, 9, 5)         # When patwaris begin executing the plan
+BASELINE_TARGET_DATE = date(2026, 9, 4)    # Snapshot used as baseline for rate calculation
+FIVE_DAY_WINDOWS = [
+    ("06-10 Sep", date(2026, 9, 6),  date(2026, 9, 10)),
+    ("11-15 Sep", date(2026, 9, 11), date(2026, 9, 15)),
+    ("16-20 Sep", date(2026, 9, 16), date(2026, 9, 20)),
+    ("21-25 Sep", date(2026, 9, 21), date(2026, 9, 25)),
+    ("26-30 Sep", date(2026, 9, 26), date(2026, 9, 30)),
+]
+
+# Rate-ratio bands (Green >= 80%, Yellow 50-79%, Red < 50%)
+GREEN_MIN = 80.0
+YELLOW_MIN = 50.0
+
 # Recognize dated snapshot filenames in two shapes:
 #   1. Our own: "2026-08-13.xlsx"     (YYYY-MM-DD)
 #   2. Government REPORT: "REPORT 21.08.2026.xlsx" or "REPORT_21_08_2026.xlsx"
@@ -92,11 +108,14 @@ OPTIONAL_MATCHERS = {
 
 def all_snapshots():
     """Return [(date, path), ...] newest first. Accepts both YYYY-MM-DD.xlsx
-    and REPORT DD.MM.YYYY.xlsx filename styles."""
+    and REPORT DD.MM.YYYY.xlsx filename styles. Ignores plan_YYYY-MM-DD.xlsx
+    (those are handled by load_plan_file)."""
     out = []
     if os.path.isdir(SNAPSHOTS_DIR):
         for name in os.listdir(SNAPSHOTS_DIR):
             if not name.lower().endswith(".xlsx") or name.startswith("~"):
+                continue
+            if name.lower().startswith("plan_") or name.lower().startswith("plan "):
                 continue
             d = _parse_snapshot_date(name)
             if d:
@@ -181,6 +200,66 @@ def _is_report_format(df_columns):
 
 
 _reference_cache = {}
+_plan_cache = {}
+
+
+def load_plan_file():
+    """Find and load the newest plan_YYYY-MM-DD.xlsx in snapshots/. Returns a
+    DataFrame with (tehsil, village, expected_date, is_completed_per_plan,
+    start_order) or None if no plan file present."""
+    if not os.path.isdir(SNAPSHOTS_DIR):
+        return None
+    plan_files = []
+    for name in os.listdir(SNAPSHOTS_DIR):
+        m = re.match(r"plan[_ ](\d{4}-\d{2}-\d{2})\.xlsx$", name, re.I)
+        if not m:
+            continue
+        try:
+            d = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        plan_files.append((d, os.path.join(SNAPSHOTS_DIR, name)))
+    if not plan_files:
+        return None
+    plan_files.sort(key=lambda x: x[0], reverse=True)
+    plan_date, plan_path = plan_files[0]
+    mtime = os.path.getmtime(plan_path)
+    cache_key = (plan_path, mtime)
+    if cache_key in _plan_cache:
+        return _plan_cache[cache_key]
+    # Sheet 1 has a title, rules row, colour-key row, then the header on row index 3.
+    raw = pd.read_excel(plan_path, sheet_name="Plan by Patwari", header=3)
+    # Keep only rows with a numeric S.No and non-empty Village (drops TOTAL & Notes)
+    raw = raw[raw["Village"].notna() & (raw["Village"].astype(str).str.strip() != "")]
+    raw = raw[raw["S.No"].apply(lambda x: isinstance(x, (int, float)) and pd.notna(x))]
+    exp_str = raw["Expected Date of Completion"].astype(str).str.strip()
+    is_completed = exp_str.str.lower() == "completed"
+    exp_date = pd.to_datetime(raw["Expected Date of Completion"], errors="coerce").dt.date
+    result = pd.DataFrame({
+        "tehsil_key": raw["Tehsil"].astype(str).str.strip().str.upper().values,
+        "village_key": raw["Village"].astype(str).str.strip().values,
+        "expected_date": exp_date.values,
+        "is_completed_per_plan": is_completed.values,
+        "start_order": raw["Start Order"].astype(str).str.strip().values,
+    })
+    print(f"[plan] Loaded {len(result)} rows from {plan_path} (dated {plan_date})", file=sys.stderr)
+    _plan_cache[cache_key] = result
+    return result
+
+
+def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE):
+    """Choose the snapshot that best serves as the rate-calculation baseline.
+    Prefer an exact match on `target_date`. Otherwise, use the snapshot closest
+    to `target_date` (measured in absolute days)."""
+    if not snapshots:
+        return None
+    # snapshots is [(date, path), ...] newest first
+    for d, p in snapshots:
+        if d == target_date:
+            return (d, p)
+    # Fall back to closest snapshot by absolute day distance
+    closest = min(snapshots, key=lambda x: abs((x[0] - target_date).days))
+    return closest
 
 
 def load_reference():
@@ -375,6 +454,271 @@ def apply_bands(rows, sort_key, ascending=False):
 
 
 # ---------- View building ----------
+
+def _band_for_ratio(ratio_pct):
+    """Return color band based on progress rate ratio (percent)."""
+    if ratio_pct is None:
+        return None
+    if ratio_pct >= GREEN_MIN:
+        return "green"
+    if ratio_pct >= YELLOW_MIN:
+        return "yellow"
+    return "red"
+
+
+def _window_for_date(d):
+    """Return the label of the 5-day window containing date d, or None if outside."""
+    if d is None:
+        return None
+    for label, start, end in FIVE_DAY_WINDOWS:
+        if start <= d <= end:
+            return label
+    # Dates before the first window fall into the first bucket
+    if d < FIVE_DAY_WINDOWS[0][1]:
+        return FIVE_DAY_WINDOWS[0][0]
+    # Dates past the last window fall into the last bucket
+    return FIVE_DAY_WINDOWS[-1][0]
+
+
+def build_target_view(current_df, baseline_df, plan_df, today=None):
+    """Build the Target Based view data. Requires a plan file. Returns a dict
+    with village_rows, tehsil_rows, window_columns, and metadata. Returns None
+    if plan_df is missing."""
+    if plan_df is None:
+        return None
+    if today is None:
+        today = date.today()
+
+    # Merge plan onto current data (strict on tehsil_key, village_key)
+    cur = current_df[["tehsil", "village", "patwari", "khasras", "submitted", "verified", "approved"]].copy()
+    cur["tehsil_key"] = cur["tehsil"].str.upper()
+    cur["village_key"] = cur["village"]
+    merged = cur.merge(plan_df, on=["tehsil_key", "village_key"], how="left")
+
+    # Baseline: submitted per village at baseline snapshot date, keyed same way
+    baseline_map = {}
+    baseline_date = None
+    if baseline_df is not None:
+        bl = baseline_df[["tehsil", "village", "submitted"]].copy()
+        bl["k"] = bl["tehsil"].str.upper() + "|" + bl["village"]
+        baseline_map = dict(zip(bl["k"], bl["submitted"].astype(int)))
+
+    # For rate: days between baseline and today (must be > 0)
+    # In the app, `baseline_date` is passed via meta; here we assume caller
+    # supplies baseline_df aligned to BASELINE_TARGET_DATE (or closest).
+
+    village_rows = []
+    for _, r in merged.iterrows():
+        village = r["village"]
+        tehsil = r["tehsil"]
+        total = int(r["khasras"])
+        submitted = int(r["submitted"])
+        verified = int(r["verified"])
+        approved = int(r["approved"])
+        patwari = r["patwari"]
+        expected = r["expected_date"] if pd.notna(r.get("expected_date")) else None
+        completed_per_plan = bool(r.get("is_completed_per_plan", False))
+
+        # A village is "actually completed" if approved >= total (strict, per user)
+        is_completed_now = (approved >= total and total > 0)
+
+        # Days baseline→today (use max 1 to avoid div by zero)
+        baseline_submitted = baseline_map.get(f"{tehsil.upper()}|{village}", 0)
+
+        # Rate calc — only for pending villages with a real expected date
+        rate_ratio = None
+        band = None
+        if not is_completed_now and expected is not None:
+            days_to_expected = (expected - today).days
+            if days_to_expected <= 0:
+                # Past deadline — no meaningful rate; village is delayed
+                rate_ratio = 0.0
+                band = "red"
+            else:
+                remaining = max(total - submitted, 0)
+                required_daily = remaining / days_to_expected if days_to_expected > 0 else 0
+                # actual daily rate is submissions per day since baseline
+                # We'll fold `days_since_baseline` in via the caller's supplied value
+                # For simplicity, pass through via meta
+                rate_ratio = None  # to be filled below
+
+        # Determine pending stage if past expected date and not complete
+        pending_stage = None
+        days_delayed = None
+        if expected is not None and today > expected and not is_completed_now:
+            days_delayed = (today - expected).days
+            # Determine latest reached stage
+            if approved > 0:
+                pending_stage = "Approved (partial)"
+            elif verified > 0:
+                pending_stage = "Verified"
+            elif submitted > 0:
+                pending_stage = "Submitted"
+            else:
+                pending_stage = "Not Started"
+
+        village_rows.append({
+            "tehsil": tehsil,
+            "village": village,
+            "patwari": patwari,
+            "total": total,
+            "submitted": submitted,
+            "verified": verified,
+            "approved": approved,
+            "expected_date": expected,
+            "expected_date_str": expected.strftime("%d %b %Y") if expected else "—",
+            "is_completed_now": is_completed_now,
+            "completed_per_plan": completed_per_plan,
+            "pending_stage": pending_stage,
+            "days_delayed": days_delayed,
+            "baseline_submitted": baseline_submitted,
+        })
+
+    # Compute rate ratios using baseline delta
+    # days_since_baseline is district-wide (we picked one baseline date)
+    days_since_baseline = 0
+    if baseline_df is not None:
+        # We estimate baseline date from meta if callers pass it; default: 04-Sep
+        days_since_baseline = max((today - BASELINE_TARGET_DATE).days, 1)
+    for row in village_rows:
+        if row["is_completed_now"] or row["expected_date"] is None:
+            row["rate_ratio"] = None
+            row["band"] = None
+            continue
+        days_to_expected = (row["expected_date"] - today).days
+        if days_to_expected <= 0:
+            # Past deadline; treat as extremely under-rate
+            row["rate_ratio"] = 0.0
+            row["band"] = "red"
+            continue
+        actual_delta = max(row["submitted"] - row["baseline_submitted"], 0)
+        actual_daily = actual_delta / days_since_baseline if days_since_baseline > 0 else 0
+        remaining = max(row["total"] - row["submitted"], 0)
+        required_daily = remaining / days_to_expected if days_to_expected > 0 else 0
+        if required_daily <= 0:
+            # Nothing needed — treat as green
+            row["rate_ratio"] = 100.0
+            row["band"] = "green"
+        else:
+            ratio = (actual_daily / required_daily) * 100.0
+            row["rate_ratio"] = ratio
+            row["band"] = _band_for_ratio(ratio)
+
+    # Sort: pending villages by expected date ascending (earliest first, no date = end of pending),
+    # then completed villages at the very bottom in tehsil order
+    def _sort_key(row):
+        if row["is_completed_now"]:
+            return (2, "")  # completed section
+        if row["expected_date"] is None:
+            return (1, row["village"])  # pending but no date
+        return (0, row["expected_date"].isoformat())
+    village_rows.sort(key=_sort_key)
+
+    # ---------- Tehsil rows ----------
+    # Group by tehsil, compute aggregate rates and window counts.
+    by_tehsil = {}
+    for row in village_rows:
+        t = row["tehsil"]
+        if t not in by_tehsil:
+            by_tehsil[t] = {
+                "tehsil": t,
+                "villages": 0,
+                "total": 0,
+                "submitted": 0,
+                "baseline_submitted": 0,
+                "approved": 0,
+                "villages_completed": 0,
+                "windows": {label: 0 for label, *_ in FIVE_DAY_WINDOWS},
+            }
+        e = by_tehsil[t]
+        e["villages"] += 1
+        e["total"] += row["total"]
+        e["submitted"] += row["submitted"]
+        e["baseline_submitted"] += row["baseline_submitted"]
+        e["approved"] += row["approved"]
+        if row["is_completed_now"]:
+            e["villages_completed"] += 1
+        else:
+            # Count in its expected-date window (skips completed villages)
+            w = _window_for_date(row["expected_date"])
+            if w:
+                e["windows"][w] += 1
+
+    # Determine which windows are "pending" (at least one tehsil has non-zero AND today > window end)
+    pending_windows = set()
+    for label, start, end in FIVE_DAY_WINDOWS:
+        if today > end:
+            any_pending = any(t["windows"][label] > 0 for t in by_tehsil.values())
+            if any_pending:
+                pending_windows.add(label)
+    # Current or upcoming window: the first window whose end is >= today
+    current_window = None
+    for label, start, end in FIVE_DAY_WINDOWS:
+        if end >= today:
+            current_window = label
+            break
+
+    # Column definitions for tehsil rows
+    window_columns = []
+    for label, start, end in FIVE_DAY_WINDOWS:
+        if label in pending_windows:
+            window_columns.append({"label": label, "header": f"Pending in ({label})", "is_pending": True})
+        elif label == current_window:
+            window_columns.append({"label": label, "header": f"Next 5-Day Target ({label})", "is_pending": False, "is_current": True})
+        # Windows entirely in the past and cleared → dropped
+        # Windows entirely in the future (not current) → dropped for now (only "next" shown)
+
+    # Tehsil rate + band
+    tehsil_rows = []
+    for t_name, e in sorted(by_tehsil.items(), key=lambda x: x[1]["submitted"], reverse=True):
+        rate_ratio = None
+        band = None
+        remaining = max(e["total"] - e["submitted"], 0)
+        days_to_deadline = max((DEADLINE_DATE - today).days, 0)
+        if days_to_deadline > 0 and remaining > 0:
+            required_daily = remaining / days_to_deadline
+            actual_delta = max(e["submitted"] - e["baseline_submitted"], 0)
+            actual_daily = actual_delta / days_since_baseline if days_since_baseline > 0 else 0
+            rate_ratio = (actual_daily / required_daily) * 100.0 if required_daily > 0 else 100.0
+            band = _band_for_ratio(rate_ratio)
+        elif remaining == 0:
+            rate_ratio = 100.0
+            band = "green"
+        elif days_to_deadline == 0:
+            # Deadline reached
+            rate_ratio = 0.0
+            band = "red"
+        # Assemble row with the visible window columns
+        window_values = {col["label"]: e["windows"][col["label"]] for col in window_columns}
+        tehsil_rows.append({
+            "tehsil": t_name,
+            "villages": e["villages"],
+            "total": e["total"],
+            "submitted": e["submitted"],
+            "approved": e["approved"],
+            "pct": _pct(e["submitted"], e["total"]),
+            "pct_approved": _pct(e["approved"], e["total"]),
+            "villages_completed": e["villages_completed"],
+            "windows": window_values,
+            "rate_ratio": rate_ratio,
+            "band": band,
+        })
+
+    return {
+        "village_rows": village_rows,
+        "tehsil_rows": tehsil_rows,
+        "window_columns": window_columns,
+        "meta": {
+            "today": today,
+            "deadline": DEADLINE_DATE,
+            "baseline_target_date": BASELINE_TARGET_DATE,
+            "days_since_baseline": days_since_baseline,
+            "days_to_deadline": max((DEADLINE_DATE - today).days, 0),
+            "green_min": GREEN_MIN,
+            "yellow_min": YELLOW_MIN,
+        },
+    }
+
 
 def build_views(current_df, from_df=None, tehsils_filter=None):
     """Build every view. tehsils_filter: None | 'all' | set of tehsil names."""
@@ -682,6 +1026,22 @@ def index():
     tehsils_filter = parse_tehsils_param(request.args)
     views = build_views(current_df, from_df, tehsils_filter)
 
+    # Target Based view — loads plan file + baseline snapshot; may be None if plan missing
+    plan_df = load_plan_file()
+    target_view = None
+    baseline_info = None
+    if plan_df is not None:
+        baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE)
+        baseline_df = None
+        if baseline:
+            b_date, b_path = baseline
+            try:
+                baseline_df = load_snapshot(b_path)
+                baseline_info = {"date": b_date, "path": os.path.basename(b_path)}
+            except Exception as e:
+                print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
+        target_view = build_target_view(current_df, baseline_df, plan_df)
+
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
     date_options = [(d.isoformat(), format_date(d)) for d, _ in snapshots]
@@ -703,6 +1063,9 @@ def index():
         is_all_selected=is_all_selected,
         selected_tehsils=selected_tehsils,
         coloring_active=(tehsils_filter is not None),
+        target_view=target_view,
+        baseline_info=baseline_info,
+        target_deadline=DEADLINE_DATE,
         **views,
     )
 
