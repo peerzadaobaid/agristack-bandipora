@@ -194,12 +194,104 @@
     /* On narrow screens, move to top-right so it doesn't overlap the wordmark */
     .back-to-hub { left: auto; right: 14px; padding: 7px 12px; font-size: 12px; }
   }
+
+  /* Mode toggle bar (Target Based view) */
+  .mode-toggle-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding: 12px 18px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+  }
+  .mode-toggle-bar .toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--ink);
+    cursor: pointer;
+    user-select: none;
+  }
+  .mode-toggle-bar .toggle-hint {
+    font-size: 11px;
+    color: var(--mute);
+    letter-spacing: 0.02em;
+  }
+  .mode-toggle-bar input[type="checkbox"] {
+    accent-color: var(--ink);
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+  }
+  .mode-toggle-bar .toggle-name {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  /* Mode switching: default vs target-based */
+  .mode-default-only { display: block; }
+  .mode-target-only { display: none; }
+  body.mode-target .mode-default-only { display: none; }
+  body.mode-target .mode-target-only { display: block; }
+  body.mode-target .tab-default-only { display: none; }
+  body.mode-target .dl-default-only { display: none; }
+
+  /* Target-view row/tehsil bands (based on rate ratio) */
+  tbody tr.tband-green td   { background-color: #DDF0D8 !important; }
+  tbody tr.tband-yellow td  { background-color: #FFF3CD !important; }
+  tbody tr.tband-red td     { background-color: #F8D7DA !important; }
+  tbody tr.tband-completed td { background-color: #E5E5E0 !important; color: var(--mute); }
+
+  .completed-divider td {
+    background: var(--rule-soft) !important;
+    color: var(--mute);
+    font-style: italic;
+    text-align: center;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 6px 10px !important;
+  }
+
+  .status-cell {
+    font-size: 12px;
+  }
+  .status-cell.delayed { color: var(--terra); font-weight: 500; }
+  .status-cell.completed { color: var(--pos); font-weight: 500; }
+  .status-cell.ontrack { color: var(--mute); }
+
+  .target-meta {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ink);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.55;
+  }
+  .target-meta strong { color: var(--ink); font-weight: 600; }
+  .target-meta .kv { color: var(--mute); font-size: 12px; margin-left: 4px; }
 </style>
 </head>
 <body>
 <a href="/" class="back-to-hub" aria-label="Back to Progress Monitoring landing page">&larr; &nbsp;Progress Monitoring</a>
 <div class="wrap">
   <div class="top-bar"><div class="wordmark">AgriStack</div></div>
+
+  {% if target_view %}
+  <div class="mode-toggle-bar">
+    <span class="toggle-hint">Switch layout:</span>
+    <label class="toggle-label">
+      <input type="checkbox" id="mode-toggle-checkbox">
+      <span class="toggle-name">Target Based view</span>
+    </label>
+  </div>
+  {% endif %}
 
   <header>
     <div class="head-row">
@@ -272,8 +364,8 @@
 
   <div class="tabs" role="tablist">
     <button class="tab active" data-target="tehsil">Tehsil Wise</button>
-    <button class="tab" data-target="overall">Overall All</button>
-    <button class="tab" data-target="patwari">Patwari Wise</button>
+    <button class="tab tab-default-only" data-target="overall">Overall All</button>
+    <button class="tab tab-default-only" data-target="patwari">Patwari Wise</button>
     {% if checker_rows %}<button class="tab" data-target="checker">Checker Wise</button>{% endif %}
     <button class="tab" data-target="village">Village Wise</button>
   </div>
@@ -288,48 +380,106 @@
 
   <!-- === TEHSIL WISE === -->
   <section id="tehsil" class="panel active">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:55px">S.NO</th>
-            <th>Tehsil</th>
-            <th style="width:100px">Villages</th>
-            <th style="width:150px">Total Survey Nos</th>
-            <th style="width:120px">Submitted</th>
-            <th style="width:130px">% Completion</th>
-            {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
-            <th style="width:120px">% Approved</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in tehsil_rows %}
-          <tr>
-            <td class="center">{{ loop.index }}</td>
-            <td>{{ row.tehsil }}</td>
-            <td class="num">{{ "{:,}".format(row.villages) }}</td>
-            <td class="num">{{ "{:,}".format(row.total) }}</td>
-            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
-            <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
-            {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
-            <td class="pct">{{ "%.2f"|format(row.pct_approved) }}%</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td></td>
-            <td>TOTAL</td>
-            <td class="num">{{ "{:,}".format(grand.villages) }}</td>
-            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
-            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-            <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
-            {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
-            <td class="pct">{{ "%.2f"|format(grand.overall_pct_approved) }}%</td>
-          </tr>
-        </tfoot>
-      </table>
+    <div class="mode-default-only">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:55px">S.NO</th>
+              <th>Tehsil</th>
+              <th style="width:100px">Villages</th>
+              <th style="width:150px">Total Survey Nos</th>
+              <th style="width:120px">Submitted</th>
+              <th style="width:130px">% Completion</th>
+              {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+              <th style="width:120px">% Approved</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in tehsil_rows %}
+            <tr>
+              <td class="center">{{ loop.index }}</td>
+              <td>{{ row.tehsil }}</td>
+              <td class="num">{{ "{:,}".format(row.villages) }}</td>
+              <td class="num">{{ "{:,}".format(row.total) }}</td>
+              <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+              {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+              <td class="pct">{{ "%.2f"|format(row.pct_approved) }}%</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td></td>
+              <td>TOTAL</td>
+              <td class="num">{{ "{:,}".format(grand.villages) }}</td>
+              <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+              <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+              {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+              <td class="pct">{{ "%.2f"|format(grand.overall_pct_approved) }}%</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
+
+    {% if target_view %}
+    <div class="mode-target-only">
+      <div class="target-meta">
+        <strong>Target Based view</strong> — plan deadline
+        <strong>{{ target_view.meta.deadline.strftime("%d %b %Y") }}</strong>
+        &middot; {{ target_view.meta.days_to_deadline }} days remaining
+        &middot; baseline
+        <strong>{{ target_view.meta.baseline_target_date.strftime("%d %b %Y") }}</strong>
+        ({{ target_view.meta.days_since_baseline }} days since).
+        Row colour = green ≥ 80%, yellow 50–79%, red &lt; 50% of required rate.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:55px">S.NO</th>
+              <th>Tehsil</th>
+              <th style="width:80px">Villages</th>
+              <th style="width:130px">Total Survey Nos</th>
+              <th style="width:110px">Submitted</th>
+              <th style="width:100px">% Completion</th>
+              <th style="width:100px">% Approved</th>
+              <th style="width:130px">Villages Completed</th>
+              {% for wc in target_view.window_columns %}
+              <th style="width:120px">{{ wc.header }}</th>
+              {% endfor %}
+              <th style="width:110px">Rate Ratio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in target_view.tehsil_rows %}
+            <tr{% if row.band %} class="tband-{{ row.band }}"{% endif %}>
+              <td class="center">{{ loop.index }}</td>
+              <td>{{ row.tehsil }}</td>
+              <td class="num">{{ row.villages }}</td>
+              <td class="num">{{ "{:,}".format(row.total) }}</td>
+              <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+              <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
+              <td class="pct">{{ "%.2f"|format(row.pct_approved) }}%</td>
+              <td class="num">{{ row.villages_completed }} / {{ row.villages }}</td>
+              {% for wc in target_view.window_columns %}
+              <td class="num">{{ row.windows[wc.label] }}</td>
+              {% endfor %}
+              <td class="pct">
+                {% if row.rate_ratio is none %}—
+                {% else %}{{ "%.1f"|format(row.rate_ratio) }}%
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
   </section>
 
   <!-- === OVERALL ALL === -->
@@ -508,60 +658,126 @@
 
   <!-- === VILLAGE WISE === -->
   <section id="village" class="panel">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:55px">S.NO</th>
-            <th style="width:110px">Tehsil</th>
-            <th>Village</th>
-            <th style="width:140px">Total Survey Nos</th>
-            <th style="width:200px">Name of Patwari</th>
-            <th style="width:110px">Submitted</th>
-            <th style="width:100px">Verified</th>
-            <th style="width:100px">Approved</th>
-            {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in village_rows %}
-          <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}>
-            <td class="center">{{ loop.index }}</td>
-            <td>{{ row.tehsil }}</td>
-            <td>{{ row.village }}</td>
-            <td class="num">{{ "{:,}".format(row.total) }}</td>
-            <td>{{ row.patwari }}</td>
-            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
-            <td class="num">{{ "{:,}".format(row.verified) }}</td>
-            <td class="num">{{ "{:,}".format(row.approved) }}</td>
-            {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
-          </tr>
-          {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td></td>
-            <td></td>
-            <td>TOTAL{% if coloring_active %} (Filtered){% endif %}</td>
-            {% if coloring_active and village_totals %}
-              <td class="num">{{ "{:,}".format(village_totals.total) }}</td>
+    <div class="mode-default-only">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:55px">S.NO</th>
+              <th style="width:110px">Tehsil</th>
+              <th>Village</th>
+              <th style="width:140px">Total Survey Nos</th>
+              <th style="width:200px">Name of Patwari</th>
+              <th style="width:110px">Submitted</th>
+              <th style="width:100px">Verified</th>
+              <th style="width:100px">Approved</th>
+              {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in village_rows %}
+            <tr{% if row.band %} class="band-{{ row.band }}"{% endif %}>
+              <td class="center">{{ loop.index }}</td>
+              <td>{{ row.tehsil }}</td>
+              <td>{{ row.village }}</td>
+              <td class="num">{{ "{:,}".format(row.total) }}</td>
+              <td>{{ row.patwari }}</td>
+              <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+              <td class="num">{{ "{:,}".format(row.verified) }}</td>
+              <td class="num">{{ "{:,}".format(row.approved) }}</td>
+              {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
               <td></td>
-              <td class="num">{{ "{:,}".format(village_totals.submitted) }}</td>
-              <td class="num">{{ "{:,}".format(village_totals.verified) }}</td>
-              <td class="num">{{ "{:,}".format(village_totals.approved) }}</td>
-              {% if has_additions %}{{ additions_cell(village_totals.additions) }}{% endif %}
-            {% else %}
-              <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
               <td></td>
-              <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
-              <td class="num">{{ "{:,}".format(overall_totals.verified) }}</td>
-              <td class="num">{{ "{:,}".format(overall_totals.approved) }}</td>
-              {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
-            {% endif %}
-          </tr>
-        </tfoot>
-      </table>
+              <td>TOTAL{% if coloring_active %} (Filtered){% endif %}</td>
+              {% if coloring_active and village_totals %}
+                <td class="num">{{ "{:,}".format(village_totals.total) }}</td>
+                <td></td>
+                <td class="num">{{ "{:,}".format(village_totals.submitted) }}</td>
+                <td class="num">{{ "{:,}".format(village_totals.verified) }}</td>
+                <td class="num">{{ "{:,}".format(village_totals.approved) }}</td>
+                {% if has_additions %}{{ additions_cell(village_totals.additions) }}{% endif %}
+              {% else %}
+                <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+                <td></td>
+                <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+                <td class="num">{{ "{:,}".format(overall_totals.verified) }}</td>
+                <td class="num">{{ "{:,}".format(overall_totals.approved) }}</td>
+                {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+              {% endif %}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
+
+    {% if target_view %}
+    <div class="mode-target-only">
+      <div class="target-meta">
+        Sorted by <strong>Expected Date of Completion</strong> — earliest first, then completed villages at the bottom. Row colour = green ≥ 80%, yellow 50–79%, red &lt; 50% of required daily rate.
+        Delayed villages show which stage they're stuck at.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:55px">S.NO</th>
+              <th style="width:100px">Tehsil</th>
+              <th>Village</th>
+              <th style="width:120px">Total</th>
+              <th style="width:180px">Patwari</th>
+              <th style="width:100px">Submitted</th>
+              <th style="width:100px">Verified</th>
+              <th style="width:100px">Approved</th>
+              <th style="width:130px">Expected Date</th>
+              <th style="width:200px">Status</th>
+              <th style="width:90px">Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set completed_started = namespace(v=False) %}
+            {% for row in target_view.village_rows %}
+              {% if row.is_completed_now and not completed_started.v %}
+                {% set completed_started.v = True %}
+                <tr class="completed-divider">
+                  <td colspan="11">— Completed villages —</td>
+                </tr>
+              {% endif %}
+              <tr{% if row.is_completed_now %} class="tband-completed"{% elif row.band %} class="tband-{{ row.band }}"{% endif %}>
+                <td class="center">{{ loop.index }}</td>
+                <td>{{ row.tehsil }}</td>
+                <td>{{ row.village }}</td>
+                <td class="num">{{ "{:,}".format(row.total) }}</td>
+                <td>{{ row.patwari }}</td>
+                <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+                <td class="num">{{ "{:,}".format(row.verified) }}</td>
+                <td class="num">{{ "{:,}".format(row.approved) }}</td>
+                <td>{{ row.expected_date_str }}</td>
+                <td class="status-cell{% if row.is_completed_now %} completed{% elif row.days_delayed %} delayed{% else %} ontrack{% endif %}">
+                  {% if row.is_completed_now %}
+                    Completed
+                  {% elif row.days_delayed %}
+                    Pending at: {{ row.pending_stage }} · {{ row.days_delayed }} day{% if row.days_delayed != 1 %}s{% endif %} delayed
+                  {% else %}
+                    On track
+                  {% endif %}
+                </td>
+                <td class="pct">
+                  {% if row.rate_ratio is none %}—
+                  {% else %}{{ "%.1f"|format(row.rate_ratio) }}%
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
   </section>
 
   <div class="download-bar">
@@ -599,6 +815,27 @@
       document.getElementById(tab.dataset.target).classList.add('active');
     });
   });
+
+  // Target Based view toggle: persists in localStorage per browser
+  const modeToggle = document.getElementById('mode-toggle-checkbox');
+  if (modeToggle) {
+    const applyMode = (isTarget) => {
+      document.body.classList.toggle('mode-target', isTarget);
+      // If the currently-active tab is now hidden, switch to the first visible tab
+      const activeTab = document.querySelector('.tab.active');
+      if (activeTab && getComputedStyle(activeTab).display === 'none') {
+        const firstVisible = Array.from(tabs).find(t => getComputedStyle(t).display !== 'none');
+        if (firstVisible) firstVisible.click();
+      }
+    };
+    const stored = localStorage.getItem('view-mode') === 'target';
+    modeToggle.checked = stored;
+    applyMode(stored);
+    modeToggle.addEventListener('change', () => {
+      localStorage.setItem('view-mode', modeToggle.checked ? 'target' : 'default');
+      applyMode(modeToggle.checked);
+    });
+  }
 
   const subtabs = document.querySelectorAll('.subtab');
   const subpanels = document.querySelectorAll('.subpanel');
