@@ -203,6 +203,17 @@ _reference_cache = {}
 _plan_cache = {}
 
 
+def has_plan_file():
+    """Cheap filesystem-only check: is any plan_*.xlsx present? Does NOT read
+    the file. Use this to decide whether to show the Target Based view toggle."""
+    if not os.path.isdir(SNAPSHOTS_DIR):
+        return False
+    for name in os.listdir(SNAPSHOTS_DIR):
+        if re.match(r"plan[_ ]\d{4}-\d{2}-\d{2}\.xlsx$", name, re.I):
+            return True
+    return False
+
+
 def load_plan_file():
     """Find and load the newest plan_YYYY-MM-DD.xlsx in snapshots/. Returns a
     DataFrame with (tehsil, village, expected_date, is_completed_per_plan,
@@ -408,6 +419,8 @@ def load_snapshot(path):
                 new_df[opt] = df[cols[opt]].values
 
     # Numeric coercion + string cleanup (common to both formats)
+    # Explicit .copy() to eliminate SettingWithCopyWarning / ChainedAssignmentError.
+    new_df = new_df.copy()
     for numcol in ("khasras", "submitted", "approved", "verified", "seek_clarification"):
         if numcol in new_df.columns:
             new_df[numcol] = pd.to_numeric(new_df[numcol], errors="coerce").fillna(0).astype(int)
@@ -416,7 +429,7 @@ def load_snapshot(path):
     for scol in ("tehsil", "village", "patwari", "checker"):
         if scol in new_df.columns:
             new_df[scol] = new_df[scol].astype(str).str.strip().replace({"nan": "", "NaN": "", "None": ""})
-    new_df = new_df[(new_df["village"] != "") & (new_df["village"].str.lower() != "nan")]
+    new_df = new_df[(new_df["village"] != "") & (new_df["village"].str.lower() != "nan")].copy()
     new_df["subdivision"] = new_df["tehsil"].str.upper().map(TEHSIL_TO_SUBDIV).fillna("UNKNOWN")
     _df_cache[path] = new_df
     return new_df
@@ -774,17 +787,17 @@ def build_views(current_df, from_df=None, tehsils_filter=None):
 
     # === Patwari Wise (two sorts) — filtered by tehsils picker ===
     if active_tehsils is not None:
-        p_source = current_df[current_df["tehsil"].str.upper().isin(active_tehsils)]
-        p_old_source = from_df[from_df["tehsil"].str.upper().isin(active_tehsils)] if has_additions else None
+        p_source = current_df[current_df["tehsil"].str.upper().isin(active_tehsils)].copy()
+        p_old_source = from_df[from_df["tehsil"].str.upper().isin(active_tehsils)].copy() if has_additions else None
     else:
-        p_source = current_df
-        p_old_source = from_df if has_additions else None
+        p_source = current_df.copy()
+        p_old_source = from_df.copy() if has_additions else None
 
     p = (p_source.groupby("patwari", as_index=False)
                  .agg(villages_list=("village", lambda s: ", ".join(sorted(s.tolist()))),
                       tehsils=("tehsil", lambda s: " / ".join(sorted(set(s)))),
                       total=("khasras", "sum"),
-                      submitted=("submitted", "sum")))
+                      submitted=("submitted", "sum"))).copy()
     p["pct"] = p.apply(lambda r: _pct(int(r["submitted"]), int(r["total"])), axis=1)
     if has_additions and p_old_source is not None:
         old_by_p = p_old_source.groupby("patwari")["submitted"].sum().to_dict()
@@ -1031,22 +1044,38 @@ def index():
     tehsils_filter = parse_tehsils_param(request.args)
     views = build_views(current_df, from_df, tehsils_filter)
 
-    # Target Based view — only computed when explicitly requested (saves memory)
-    plan_df = load_plan_file()
-    plan_available = plan_df is not None
+    # Only touch the plan file when the user actually wants the target view.
+    # In default mode we do a cheap filesystem check so the toggle can render,
+    # but we don't spend memory parsing the Excel.
+    plan_available = has_plan_file()
     target_view = None
     baseline_info = None
     if mode == "target" and plan_available:
-        baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE)
-        baseline_df = None
-        if baseline:
-            b_date, b_path = baseline
+        try:
+            plan_df = load_plan_file()
+        except Exception as e:
+            print(f"[target-view] Failed to load plan file: {e}", file=sys.stderr)
+            plan_df = None
+        if plan_df is not None:
+            baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE)
+            baseline_df = None
+            if baseline:
+                b_date, b_path = baseline
+                try:
+                    baseline_df = load_snapshot(b_path)
+                    baseline_info = {"date": b_date, "path": os.path.basename(b_path)}
+                except Exception as e:
+                    print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
             try:
-                baseline_df = load_snapshot(b_path)
-                baseline_info = {"date": b_date, "path": os.path.basename(b_path)}
+                target_view = build_target_view(current_df, baseline_df, plan_df)
             except Exception as e:
-                print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
-        target_view = build_target_view(current_df, baseline_df, plan_df)
+                print(f"[target-view] build_target_view failed: {e}", file=sys.stderr)
+                target_view = None
+            # Free heavy DataFrames so template rendering has more headroom
+            del plan_df
+            if baseline_df is not None:
+                del baseline_df
+            import gc; gc.collect()
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
