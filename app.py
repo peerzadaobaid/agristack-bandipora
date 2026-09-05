@@ -215,9 +215,13 @@ def has_plan_file():
 
 
 def load_plan_file():
-    """Find and load the newest plan_YYYY-MM-DD.xlsx in snapshots/. Returns a
-    DataFrame with (tehsil, village, expected_date, is_completed_per_plan,
-    start_order) or None if no plan file present."""
+    """Find and load the newest plan_YYYY-MM-DD.xlsx in snapshots/.
+    Returns a dict keyed on (TEHSIL_UPPER, village_exact) mapping to
+    {'expected_date': date|None, 'is_completed_per_plan': bool, 'start_order': str},
+    or None if no plan file present.
+
+    Uses openpyxl in read_only mode (bypasses pandas) to keep memory low —
+    important on Render's free tier where the target view was OOM'ing."""
     if not os.path.isdir(SNAPSHOTS_DIR):
         return None
     plan_files = []
@@ -238,24 +242,76 @@ def load_plan_file():
     cache_key = (plan_path, mtime)
     if cache_key in _plan_cache:
         return _plan_cache[cache_key]
-    # Sheet 1 has a title, rules row, colour-key row, then the header on row index 3.
-    raw = pd.read_excel(plan_path, sheet_name="Plan by Patwari", header=3)
-    # Keep only rows with a numeric S.No and non-empty Village (drops TOTAL & Notes)
-    raw = raw[raw["Village"].notna() & (raw["Village"].astype(str).str.strip() != "")]
-    raw = raw[raw["S.No"].apply(lambda x: isinstance(x, (int, float)) and pd.notna(x))]
-    exp_str = raw["Expected Date of Completion"].astype(str).str.strip()
-    is_completed = exp_str.str.lower() == "completed"
-    exp_date = pd.to_datetime(raw["Expected Date of Completion"], errors="coerce").dt.date
-    result = pd.DataFrame({
-        "tehsil_key": raw["Tehsil"].astype(str).str.strip().str.upper().values,
-        "village_key": raw["Village"].astype(str).str.strip().values,
-        "expected_date": exp_date.values,
-        "is_completed_per_plan": is_completed.values,
-        "start_order": raw["Start Order"].astype(str).str.strip().values,
-    })
-    print(f"[plan] Loaded {len(result)} rows from {plan_path} (dated {plan_date})", file=sys.stderr)
-    _plan_cache[cache_key] = result
-    return result
+
+    from openpyxl import load_workbook
+    wb = load_workbook(plan_path, read_only=True, data_only=True)
+    try:
+        # Prefer 'Plan by Patwari' sheet; fall back to first sheet
+        if "Plan by Patwari" in wb.sheetnames:
+            ws = wb["Plan by Patwari"]
+        else:
+            ws = wb.worksheets[0]
+
+        plan_data = {}
+        header_idx = {}
+        for row in ws.iter_rows(values_only=True):
+            if not row:
+                continue
+            # Detect header row by presence of "S.No" cell
+            if not header_idx:
+                for i, cell in enumerate(row):
+                    if cell and str(cell).strip().lower() == "s.no":
+                        for j, h in enumerate(row):
+                            if h:
+                                header_idx[str(h).strip().lower()] = j
+                        break
+                continue
+
+            def _cell(col_name):
+                idx = header_idx.get(col_name)
+                if idx is None or idx >= len(row):
+                    return None
+                return row[idx]
+
+            tehsil = _cell("tehsil")
+            village = _cell("village")
+            if not village or not str(village).strip():
+                continue
+            if not tehsil or not str(tehsil).strip():
+                continue
+
+            exp = _cell("expected date of completion")
+            expected_date = None
+            is_completed = False
+            if isinstance(exp, datetime):
+                expected_date = exp.date()
+            elif isinstance(exp, date):
+                expected_date = exp
+            elif isinstance(exp, str):
+                s = exp.strip().lower()
+                if s == "completed":
+                    is_completed = True
+                else:
+                    try:
+                        expected_date = datetime.strptime(exp.strip()[:10], "%Y-%m-%d").date()
+                    except ValueError:
+                        pass
+
+            order = _cell("start order")
+            order_str = str(order).strip() if order else ""
+
+            key = (str(tehsil).strip().upper(), str(village).strip())
+            plan_data[key] = {
+                "expected_date": expected_date,
+                "is_completed_per_plan": is_completed,
+                "start_order": order_str,
+            }
+    finally:
+        wb.close()
+
+    print(f"[plan] Loaded {len(plan_data)} entries from {plan_path} (dated {plan_date})", file=sys.stderr)
+    _plan_cache[cache_key] = plan_data
+    return plan_data
 
 
 def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE):
@@ -493,35 +549,27 @@ def _window_for_date(d):
     return FIVE_DAY_WINDOWS[-1][0]
 
 
-def build_target_view(current_df, baseline_df, plan_df, today=None):
-    """Build the Target Based view data. Requires a plan file. Returns a dict
-    with village_rows, tehsil_rows, window_columns, and metadata. Returns None
-    if plan_df is missing."""
-    if plan_df is None:
+def build_target_view(current_df, baseline_df, plan_data, today=None):
+    """Build the Target Based view data. plan_data is a dict keyed on
+    (TEHSIL_UPPER, village) as returned by load_plan_file(). Returns dict
+    with village_rows, tehsil_rows, window_columns, and metadata."""
+    if plan_data is None:
         return None
     if today is None:
         today = date.today()
 
-    # Merge plan onto current data (strict on tehsil_key, village_key)
-    cur = current_df[["tehsil", "village", "patwari", "khasras", "submitted", "verified", "approved"]].copy()
-    cur["tehsil_key"] = cur["tehsil"].str.upper()
-    cur["village_key"] = cur["village"]
-    merged = cur.merge(plan_df, on=["tehsil_key", "village_key"], how="left")
-
-    # Baseline: submitted per village at baseline snapshot date, keyed same way
+    # Baseline: submitted per (tehsil_upper, village) at baseline snapshot date.
+    # Lightweight dict lookup — no pandas merge.
     baseline_map = {}
-    baseline_date = None
     if baseline_df is not None:
-        bl = baseline_df[["tehsil", "village", "submitted"]].copy()
-        bl["k"] = bl["tehsil"].str.upper() + "|" + bl["village"]
-        baseline_map = dict(zip(bl["k"], bl["submitted"].astype(int)))
+        for _, r in baseline_df.iterrows():
+            k = (str(r["tehsil"]).upper(), str(r["village"]))
+            baseline_map[k] = int(r["submitted"])
 
-    # For rate: days between baseline and today (must be > 0)
-    # In the app, `baseline_date` is passed via meta; here we assume caller
-    # supplies baseline_df aligned to BASELINE_TARGET_DATE (or closest).
+    days_since_baseline = max((today - BASELINE_TARGET_DATE).days, 1) if baseline_df is not None else 1
 
     village_rows = []
-    for _, r in merged.iterrows():
+    for _, r in current_df.iterrows():
         village = r["village"]
         tehsil = r["tehsil"]
         total = int(r["khasras"])
@@ -529,38 +577,22 @@ def build_target_view(current_df, baseline_df, plan_df, today=None):
         verified = int(r["verified"])
         approved = int(r["approved"])
         patwari = r["patwari"]
-        expected = r["expected_date"] if pd.notna(r.get("expected_date")) else None
-        completed_per_plan = bool(r.get("is_completed_per_plan", False))
+
+        # Look up plan info for this village
+        key = (str(tehsil).upper(), str(village))
+        plan_info = plan_data.get(key, {})
+        expected = plan_info.get("expected_date")
+        completed_per_plan = plan_info.get("is_completed_per_plan", False)
 
         # A village is "actually completed" if approved >= total (strict, per user)
         is_completed_now = (approved >= total and total > 0)
-
-        # Days baseline→today (use max 1 to avoid div by zero)
-        baseline_submitted = baseline_map.get(f"{tehsil.upper()}|{village}", 0)
-
-        # Rate calc — only for pending villages with a real expected date
-        rate_ratio = None
-        band = None
-        if not is_completed_now and expected is not None:
-            days_to_expected = (expected - today).days
-            if days_to_expected <= 0:
-                # Past deadline — no meaningful rate; village is delayed
-                rate_ratio = 0.0
-                band = "red"
-            else:
-                remaining = max(total - submitted, 0)
-                required_daily = remaining / days_to_expected if days_to_expected > 0 else 0
-                # actual daily rate is submissions per day since baseline
-                # We'll fold `days_since_baseline` in via the caller's supplied value
-                # For simplicity, pass through via meta
-                rate_ratio = None  # to be filled below
+        baseline_submitted = baseline_map.get(key, 0)
 
         # Determine pending stage if past expected date and not complete
         pending_stage = None
         days_delayed = None
         if expected is not None and today > expected and not is_completed_now:
             days_delayed = (today - expected).days
-            # Determine latest reached stage
             if approved > 0:
                 pending_stage = "Approved (partial)"
             elif verified > 0:
@@ -569,6 +601,28 @@ def build_target_view(current_df, baseline_df, plan_df, today=None):
                 pending_stage = "Submitted"
             else:
                 pending_stage = "Not Started"
+
+        # Rate ratio: actual daily rate ÷ required daily rate, as percent
+        rate_ratio = None
+        band = None
+        if is_completed_now or expected is None:
+            pass  # No band
+        else:
+            days_to_expected = (expected - today).days
+            if days_to_expected <= 0:
+                rate_ratio = 0.0
+                band = "red"
+            else:
+                actual_delta = max(submitted - baseline_submitted, 0)
+                actual_daily = actual_delta / days_since_baseline if days_since_baseline > 0 else 0
+                remaining = max(total - submitted, 0)
+                required_daily = remaining / days_to_expected if days_to_expected > 0 else 0
+                if required_daily <= 0:
+                    rate_ratio = 100.0
+                    band = "green"
+                else:
+                    rate_ratio = (actual_daily / required_daily) * 100.0
+                    band = _band_for_ratio(rate_ratio)
 
         village_rows.append({
             "tehsil": tehsil,
@@ -585,50 +639,21 @@ def build_target_view(current_df, baseline_df, plan_df, today=None):
             "pending_stage": pending_stage,
             "days_delayed": days_delayed,
             "baseline_submitted": baseline_submitted,
+            "rate_ratio": rate_ratio,
+            "band": band,
         })
 
-    # Compute rate ratios using baseline delta
-    # days_since_baseline is district-wide (we picked one baseline date)
-    days_since_baseline = 0
-    if baseline_df is not None:
-        # We estimate baseline date from meta if callers pass it; default: 04-Sep
-        days_since_baseline = max((today - BASELINE_TARGET_DATE).days, 1)
-    for row in village_rows:
-        if row["is_completed_now"] or row["expected_date"] is None:
-            row["rate_ratio"] = None
-            row["band"] = None
-            continue
-        days_to_expected = (row["expected_date"] - today).days
-        if days_to_expected <= 0:
-            # Past deadline; treat as extremely under-rate
-            row["rate_ratio"] = 0.0
-            row["band"] = "red"
-            continue
-        actual_delta = max(row["submitted"] - row["baseline_submitted"], 0)
-        actual_daily = actual_delta / days_since_baseline if days_since_baseline > 0 else 0
-        remaining = max(row["total"] - row["submitted"], 0)
-        required_daily = remaining / days_to_expected if days_to_expected > 0 else 0
-        if required_daily <= 0:
-            # Nothing needed — treat as green
-            row["rate_ratio"] = 100.0
-            row["band"] = "green"
-        else:
-            ratio = (actual_daily / required_daily) * 100.0
-            row["rate_ratio"] = ratio
-            row["band"] = _band_for_ratio(ratio)
-
-    # Sort: pending villages by expected date ascending (earliest first, no date = end of pending),
-    # then completed villages at the very bottom in tehsil order
+    # Sort: pending villages by expected date ascending (earliest first, no date last),
+    # then completed villages at the very bottom
     def _sort_key(row):
         if row["is_completed_now"]:
-            return (2, "")  # completed section
+            return (2, "")
         if row["expected_date"] is None:
-            return (1, row["village"])  # pending but no date
+            return (1, row["village"])
         return (0, row["expected_date"].isoformat())
     village_rows.sort(key=_sort_key)
 
     # ---------- Tehsil rows ----------
-    # Group by tehsil, compute aggregate rates and window counts.
     by_tehsil = {}
     for row in village_rows:
         t = row["tehsil"]
@@ -652,36 +677,29 @@ def build_target_view(current_df, baseline_df, plan_df, today=None):
         if row["is_completed_now"]:
             e["villages_completed"] += 1
         else:
-            # Count in its expected-date window (skips completed villages)
             w = _window_for_date(row["expected_date"])
             if w:
                 e["windows"][w] += 1
 
-    # Determine which windows are "pending" (at least one tehsil has non-zero AND today > window end)
     pending_windows = set()
     for label, start, end in FIVE_DAY_WINDOWS:
         if today > end:
             any_pending = any(t["windows"][label] > 0 for t in by_tehsil.values())
             if any_pending:
                 pending_windows.add(label)
-    # Current or upcoming window: the first window whose end is >= today
     current_window = None
     for label, start, end in FIVE_DAY_WINDOWS:
         if end >= today:
             current_window = label
             break
 
-    # Column definitions for tehsil rows
     window_columns = []
     for label, start, end in FIVE_DAY_WINDOWS:
         if label in pending_windows:
             window_columns.append({"label": label, "header": f"Pending in ({label})", "is_pending": True})
         elif label == current_window:
             window_columns.append({"label": label, "header": f"Next 5-Day Target ({label})", "is_pending": False, "is_current": True})
-        # Windows entirely in the past and cleared → dropped
-        # Windows entirely in the future (not current) → dropped for now (only "next" shown)
 
-    # Tehsil rate + band
     tehsil_rows = []
     for t_name, e in sorted(by_tehsil.items(), key=lambda x: x[1]["submitted"], reverse=True):
         rate_ratio = None
@@ -698,10 +716,8 @@ def build_target_view(current_df, baseline_df, plan_df, today=None):
             rate_ratio = 100.0
             band = "green"
         elif days_to_deadline == 0:
-            # Deadline reached
             rate_ratio = 0.0
             band = "red"
-        # Assemble row with the visible window columns
         window_values = {col["label"]: e["windows"][col["label"]] for col in window_columns}
         tehsil_rows.append({
             "tehsil": t_name,
@@ -1052,11 +1068,11 @@ def index():
     baseline_info = None
     if mode == "target" and plan_available:
         try:
-            plan_df = load_plan_file()
+            plan_data = load_plan_file()
         except Exception as e:
             print(f"[target-view] Failed to load plan file: {e}", file=sys.stderr)
-            plan_df = None
-        if plan_df is not None:
+            plan_data = None
+        if plan_data is not None:
             baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE)
             baseline_df = None
             if baseline:
@@ -1067,14 +1083,12 @@ def index():
                 except Exception as e:
                     print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
             try:
-                target_view = build_target_view(current_df, baseline_df, plan_df)
+                target_view = build_target_view(current_df, baseline_df, plan_data)
             except Exception as e:
                 print(f"[target-view] build_target_view failed: {e}", file=sys.stderr)
                 target_view = None
-            # Free heavy DataFrames so template rendering has more headroom
-            del plan_df
-            if baseline_df is not None:
-                del baseline_df
+            # Free heavy references (plan_data is small; baseline_df is heavy)
+            baseline_df = None
             import gc; gc.collect()
 
     override = read_as_of_override()
@@ -1608,6 +1622,30 @@ def debug_files():
     lines.append("")
     lines.append(f"has_plan_file() returns: {has_plan_file()}")
     lines.append(f"all_snapshots() returns: {[(d.isoformat(), os.path.basename(p)) for d, p in all_snapshots()]}")
+
+    # === Template diagnostic ===
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append("TEMPLATE FILE DIAGNOSTIC")
+    lines.append("=" * 60)
+    tpl_path = os.path.join("templates", "index.html")
+    lines.append(f"templates/index.html exists: {os.path.exists(tpl_path)}")
+    if os.path.exists(tpl_path):
+        size = os.path.getsize(tpl_path)
+        lines.append(f"templates/index.html size: {size:,} bytes")
+        with open(tpl_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        has_toggle = "mode-toggle-checkbox" in content
+        has_plan_available = "plan_available" in content
+        has_target_view = "Target Based view" in content
+        lines.append(f"Contains 'mode-toggle-checkbox': {has_toggle}")
+        lines.append(f"Contains 'plan_available': {has_plan_available}")
+        lines.append(f"Contains 'Target Based view': {has_target_view}")
+        if has_toggle and has_plan_available:
+            lines.append("→ Template IS the updated version. Toggle should render.")
+        else:
+            lines.append("→ Template is the OLD version. That's why the toggle is missing.")
+            lines.append("   You need to re-upload templates/index.html to GitHub.")
     return "<pre style='font-family:monospace;font-size:13px;padding:20px;background:#f6f3ec;color:#1f3f2e;line-height:1.5'>" + "\n".join(lines) + "</pre>"
 
 
