@@ -1584,5 +1584,32 @@ def healthz():
     return "ok", 200
 
 
+@app.route("/debug-files")
+def debug_files():
+    """Diagnostic: shows exactly what files the running app sees in the
+    filesystem — the same information has_plan_file() uses. Handy when the
+    Target Based view toggle isn't appearing."""
+    lines = []
+    lines.append(f"Working directory: {os.getcwd()}")
+    lines.append(f"SNAPSHOTS_DIR: {SNAPSHOTS_DIR}")
+    lines.append(f"SNAPSHOTS_DIR exists: {os.path.isdir(SNAPSHOTS_DIR)}")
+    lines.append("")
+    lines.append(f"reference.xlsx present in repo root: {os.path.exists(REFERENCE_PATH)}")
+    lines.append("")
+    lines.append("Contents of snapshots/ folder:")
+    if os.path.isdir(SNAPSHOTS_DIR):
+        for name in sorted(os.listdir(SNAPSHOTS_DIR)):
+            path = os.path.join(SNAPSHOTS_DIR, name)
+            size = os.path.getsize(path) if os.path.isfile(path) else "(dir)"
+            matches_plan = bool(re.match(r"plan[_ ]\d{4}-\d{2}-\d{2}\.xlsx$", name, re.I))
+            lines.append(f"  {name!r}  ({size} bytes)  plan-match: {matches_plan}")
+    else:
+        lines.append("  (directory does not exist)")
+    lines.append("")
+    lines.append(f"has_plan_file() returns: {has_plan_file()}")
+    lines.append(f"all_snapshots() returns: {[(d.isoformat(), os.path.basename(p)) for d, p in all_snapshots()]}")
+    return "<pre style='font-family:monospace;font-size:13px;padding:20px;background:#f6f3ec;color:#1f3f2e;line-height:1.5'>" + "\n".join(lines) + "</pre>"
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
