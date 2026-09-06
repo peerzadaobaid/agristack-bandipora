@@ -314,6 +314,50 @@ def load_plan_file():
     return plan_data
 
 
+def compute_patwari_daily_avg(snapshots, baseline_date, current_date):
+    """Compute each patwari's average daily submission additions by walking
+    through every snapshot between baseline_date and current_date (inclusive).
+
+    For each consecutive snapshot pair (S_prev, S_curr), we compute per-patwari
+    delta = S_curr.submitted - S_prev.submitted (clamped at 0 to protect against
+    downward data corrections). We sum these across all pairs and divide by the
+    total number of days from the first to the last snapshot in the range.
+
+    Returns a dict {patwari_name: avg_per_day_float}. If fewer than 2 snapshots
+    are available in the range, returns {} (no meaningful daily avg possible)."""
+    if not snapshots or baseline_date is None or current_date is None:
+        return {}
+    # Snapshots within [baseline_date, current_date], sorted ascending by date
+    relevant = sorted([(d, p) for d, p in snapshots if baseline_date <= d <= current_date],
+                      key=lambda x: x[0])
+    if len(relevant) < 2:
+        return {}
+
+    per_patwari_additions = {}
+    prev_by_pat = None
+    prev_date = None
+    for snap_date, snap_path in relevant:
+        try:
+            df = load_snapshot(snap_path)
+        except Exception as e:
+            print(f"[daily-avg] Could not load {snap_path}: {e}", file=sys.stderr)
+            continue
+        # Fold cases where the same patwari appears across villages
+        by_pat = df.groupby("patwari")["submitted"].sum().to_dict()
+        if prev_by_pat is not None:
+            for p in set(by_pat.keys()) | set(prev_by_pat.keys()):
+                addition = by_pat.get(p, 0) - prev_by_pat.get(p, 0)
+                if addition > 0:
+                    per_patwari_additions[p] = per_patwari_additions.get(p, 0) + addition
+        prev_by_pat = by_pat
+        prev_date = snap_date
+
+    total_days = (relevant[-1][0] - relevant[0][0]).days
+    if total_days <= 0:
+        return {}
+    return {p: v / total_days for p, v in per_patwari_additions.items()}
+
+
 def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE, current_date=None):
     """Choose the snapshot that best serves as the rate-calculation baseline.
     Prefer an exact match on `target_date`. Otherwise pick the snapshot
@@ -553,14 +597,21 @@ def _window_for_date(d):
     return FIVE_DAY_WINDOWS[-1][0]
 
 
-def build_target_view(current_df, baseline_df, plan_data, today=None, baseline_date=None):
+def build_target_view(current_df, baseline_df, plan_data, today=None, baseline_date=None,
+                       patwari_daily_avgs=None):
     """Build the Target Based view data. plan_data is a dict keyed on
     (TEHSIL_UPPER, village) as returned by load_plan_file(). Returns dict
     with village_rows, tehsil_rows, window_columns, and metadata.
 
     `today` and `baseline_date` should be passed as the snapshot dates the
     user is viewing (so calculations are anchored to the data, not the
-    server clock)."""
+    server clock).
+
+    `patwari_daily_avgs` is an optional precomputed dict {patwari_name: avg}
+    from compute_patwari_daily_avg(). If provided, it's used for the
+    Patwari Avg/day column instead of the simple (final - initial) / days
+    calculation — which is the same math for monotonic data but handles
+    corrections and sparse snapshots more robustly."""
     if plan_data is None:
         return None
     if today is None:
@@ -712,8 +763,14 @@ def build_target_view(current_df, baseline_df, plan_data, today=None, baseline_d
             r["village"],
         ))
         info["active_village"] = info["pending"][0] if info["pending"] else None
-        delta = max(info["current_total"] - info["baseline_total"], 0)
-        info["daily_avg"] = (delta / days_since_baseline) if days_since_baseline > 0 else 0.0
+        # Daily average — prefer the explicit multi-snapshot walk-through
+        # calculation (compute_patwari_daily_avg) when supplied. Otherwise
+        # fall back to (current − baseline) / days.
+        if patwari_daily_avgs is not None:
+            info["daily_avg"] = float(patwari_daily_avgs.get(p, 0.0))
+        else:
+            delta = max(info["current_total"] - info["baseline_total"], 0)
+            info["daily_avg"] = (delta / days_since_baseline) if days_since_baseline > 0 else 0.0
 
     # Second pass: colouring and status
     for row in village_rows:
@@ -1175,9 +1232,16 @@ def index():
                 except Exception as e:
                     print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
             try:
+                # Walk through every snapshot between baseline and current to
+                # compute the patwari daily averages transparently (handles
+                # non-monotonic data, sparse snapshots, etc.)
+                patwari_daily_avgs = compute_patwari_daily_avg(
+                    snapshots, baseline_snapshot_date, to_date
+                )
                 target_view = build_target_view(
                     current_df, baseline_df, plan_data,
                     today=to_date, baseline_date=baseline_snapshot_date,
+                    patwari_daily_avgs=patwari_daily_avgs,
                 )
             except Exception as e:
                 print(f"[target-view] build_target_view failed: {e}", file=sys.stderr)
