@@ -653,6 +653,60 @@ def build_target_view(current_df, baseline_df, plan_data, today=None):
         return (0, row["expected_date"].isoformat())
     village_rows.sort(key=_sort_key)
 
+    # ---------- Per-patwari active village + daily average ----------
+    # Rule: each patwari's "active" village = the earliest-expected-date village
+    # among their non-completed villages. Only that village gets a colour band.
+    # Other non-completed villages of the same patwari show "To be started after: X".
+    # Once the active village completes (approved >= total), the next earliest one
+    # becomes active. If a village misses its date and isn't complete, it STAYS
+    # active (still colored) until it actually completes.
+    by_patwari = {}
+    for row in village_rows:
+        p = row["patwari"] or "(unassigned)"
+        if p not in by_patwari:
+            by_patwari[p] = {
+                "pending": [],
+                "baseline_total": 0,
+                "current_total": 0,
+            }
+        by_patwari[p]["baseline_total"] += row["baseline_submitted"]
+        by_patwari[p]["current_total"] += row["submitted"]
+        if not row["is_completed_now"]:
+            by_patwari[p]["pending"].append(row)
+
+    for p, info in by_patwari.items():
+        # Sort pending by (has-date first, then date, then village name)
+        info["pending"].sort(key=lambda r: (
+            0 if r["expected_date"] else 1,
+            r["expected_date"].isoformat() if r["expected_date"] else "",
+            r["village"],
+        ))
+        info["active_village"] = info["pending"][0] if info["pending"] else None
+        # Patwari daily average: (delta of their submissions) ÷ days since baseline
+        delta = max(info["current_total"] - info["baseline_total"], 0)
+        info["daily_avg"] = (delta / days_since_baseline) if days_since_baseline > 0 else 0.0
+
+    # Second pass: apply active-only coloring and waiting messages
+    for row in village_rows:
+        p = row["patwari"] or "(unassigned)"
+        info = by_patwari.get(p, {})
+        row["patwari_daily_avg"] = info.get("daily_avg", 0.0)
+        if row["is_completed_now"]:
+            row["is_active_village"] = False
+            row["waiting_after"] = None
+            continue
+        active = info.get("active_village")
+        if active is not None and row is active:
+            row["is_active_village"] = True
+            row["waiting_after"] = None
+            # Keep band + rate_ratio as computed earlier
+        else:
+            # Waiting for its turn — no colour, no rate
+            row["is_active_village"] = False
+            row["waiting_after"] = active["village"] if active else None
+            row["band"] = None
+            row["rate_ratio"] = None
+
     # ---------- Tehsil rows ----------
     by_tehsil = {}
     for row in village_rows:
