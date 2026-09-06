@@ -263,6 +263,11 @@
   .status-cell.delayed { color: var(--terra); font-weight: 500; }
   .status-cell.completed { color: var(--pos); font-weight: 500; }
   .status-cell.ontrack { color: var(--mute); }
+  .status-cell.submitted-complete {
+    color: var(--ink);
+    font-weight: 500;
+    font-size: 12px;
+  }
   .status-cell.waiting {
     color: var(--mute);
     font-style: italic;
@@ -764,9 +769,11 @@
               <td class="num">{{ "{:,}".format(row.verified) }}</td>
               <td class="num">{{ "{:,}".format(row.approved) }}</td>
               <td>{{ row.expected_date_str }}</td>
-              <td class="status-cell{% if row.is_completed_now %} completed{% elif row.waiting_after %} waiting{% elif row.days_delayed %} delayed{% else %} ontrack{% endif %}">
+              <td class="status-cell{% if row.is_completed_now %} completed{% elif row.is_submitted_complete %} submitted-complete{% elif row.waiting_after %} waiting{% elif row.days_delayed %} delayed{% else %} ontrack{% endif %}">
                 {% if row.is_completed_now %}
                   Completed
+                {% elif row.is_submitted_complete %}
+                  Pending at: {{ row.submitted_complete_stage }}
                 {% elif row.waiting_after %}
                   To be started after: {{ row.waiting_after }}
                 {% elif row.days_delayed %}
