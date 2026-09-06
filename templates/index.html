@@ -263,6 +263,11 @@
   .status-cell.delayed { color: var(--terra); font-weight: 500; }
   .status-cell.completed { color: var(--pos); font-weight: 500; }
   .status-cell.ontrack { color: var(--mute); }
+  .status-cell.waiting {
+    color: var(--mute);
+    font-style: italic;
+    font-size: 11.5px;
+  }
 
   .target-meta {
     background: var(--paper);
@@ -715,8 +720,11 @@
     </div>
     {% elif mode == 'target' and target_view %}
     <div class="target-meta">
-      Sorted by <strong>Expected Date of Completion</strong> — earliest first, then completed villages at the bottom. Row colour = green ≥ 80%, yellow 50–79%, red &lt; 50% of required daily rate.
-      Delayed villages show which stage they're stuck at.
+      Sorted by <strong>Expected Date of Completion</strong> — earliest first, then completed villages at the bottom.
+      Each patwari's <strong>active village</strong> (earliest date, not yet completed) is coloured
+      green ≥ 80%, yellow 50–79%, red &lt; 50% of required daily rate. Their other pending villages show
+      "To be started after…" with no colour until the active one completes.
+      Delayed active villages show which stage they're stuck at.
     </div>
     <div class="table-wrap">
       <table>
@@ -725,14 +733,15 @@
             <th style="width:55px">S.NO</th>
             <th style="width:100px">Tehsil</th>
             <th>Village</th>
-            <th style="width:120px">Total</th>
-            <th style="width:180px">Patwari</th>
-            <th style="width:100px">Submitted</th>
-            <th style="width:100px">Verified</th>
-            <th style="width:100px">Approved</th>
-            <th style="width:130px">Expected Date</th>
-            <th style="width:200px">Status</th>
-            <th style="width:90px">Rate</th>
+            <th style="width:110px">Total</th>
+            <th style="width:170px">Patwari</th>
+            <th style="width:100px">Patwari<br>Avg/day</th>
+            <th style="width:95px">Submitted</th>
+            <th style="width:90px">Verified</th>
+            <th style="width:90px">Approved</th>
+            <th style="width:120px">Expected Date</th>
+            <th style="width:230px">Status</th>
+            <th style="width:80px">Rate</th>
           </tr>
         </thead>
         <tbody>
@@ -741,7 +750,7 @@
             {% if row.is_completed_now and not completed_started.v %}
               {% set completed_started.v = True %}
               <tr class="completed-divider">
-                <td colspan="11">— Completed villages —</td>
+                <td colspan="12">— Completed villages —</td>
               </tr>
             {% endif %}
             <tr{% if row.is_completed_now %} class="tband-completed"{% elif row.band %} class="tband-{{ row.band }}"{% endif %}>
@@ -750,13 +759,16 @@
               <td>{{ row.village }}</td>
               <td class="num">{{ "{:,}".format(row.total) }}</td>
               <td>{{ row.patwari }}</td>
+              <td class="num">{{ "%.1f"|format(row.patwari_daily_avg) }}</td>
               <td class="num">{{ "{:,}".format(row.submitted) }}</td>
               <td class="num">{{ "{:,}".format(row.verified) }}</td>
               <td class="num">{{ "{:,}".format(row.approved) }}</td>
               <td>{{ row.expected_date_str }}</td>
-              <td class="status-cell{% if row.is_completed_now %} completed{% elif row.days_delayed %} delayed{% else %} ontrack{% endif %}">
+              <td class="status-cell{% if row.is_completed_now %} completed{% elif row.waiting_after %} waiting{% elif row.days_delayed %} delayed{% else %} ontrack{% endif %}">
                 {% if row.is_completed_now %}
                   Completed
+                {% elif row.waiting_after %}
+                  To be started after: {{ row.waiting_after }}
                 {% elif row.days_delayed %}
                   Pending at: {{ row.pending_stage }} · {{ row.days_delayed }} day{% if row.days_delayed != 1 %}s{% endif %} delayed
                 {% else %}
