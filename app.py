@@ -314,19 +314,23 @@ def load_plan_file():
     return plan_data
 
 
-def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE):
+def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE, current_date=None):
     """Choose the snapshot that best serves as the rate-calculation baseline.
-    Prefer an exact match on `target_date`. Otherwise, use the snapshot closest
-    to `target_date` (measured in absolute days)."""
+    Prefer an exact match on `target_date`. Otherwise pick the snapshot
+    closest to `target_date`, but if `current_date` is provided, only consider
+    snapshots on or before that date (a baseline can't be later than the
+    current snapshot)."""
     if not snapshots:
         return None
-    # snapshots is [(date, path), ...] newest first
     for d, p in snapshots:
         if d == target_date:
             return (d, p)
-    # Fall back to closest snapshot by absolute day distance
-    closest = min(snapshots, key=lambda x: abs((x[0] - target_date).days))
-    return closest
+    candidates = snapshots
+    if current_date is not None:
+        candidates = [(d, p) for d, p in snapshots if d <= current_date]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda x: abs((x[0] - target_date).days))
 
 
 def load_reference():
@@ -549,24 +553,32 @@ def _window_for_date(d):
     return FIVE_DAY_WINDOWS[-1][0]
 
 
-def build_target_view(current_df, baseline_df, plan_data, today=None):
+def build_target_view(current_df, baseline_df, plan_data, today=None, baseline_date=None):
     """Build the Target Based view data. plan_data is a dict keyed on
     (TEHSIL_UPPER, village) as returned by load_plan_file(). Returns dict
-    with village_rows, tehsil_rows, window_columns, and metadata."""
+    with village_rows, tehsil_rows, window_columns, and metadata.
+
+    `today` and `baseline_date` should be passed as the snapshot dates the
+    user is viewing (so calculations are anchored to the data, not the
+    server clock)."""
     if plan_data is None:
         return None
     if today is None:
         today = date.today()
 
     # Baseline: submitted per (tehsil_upper, village) at baseline snapshot date.
-    # Lightweight dict lookup — no pandas merge.
     baseline_map = {}
     if baseline_df is not None:
         for _, r in baseline_df.iterrows():
             k = (str(r["tehsil"]).upper(), str(r["village"]))
             baseline_map[k] = int(r["submitted"])
 
-    days_since_baseline = max((today - BASELINE_TARGET_DATE).days, 1) if baseline_df is not None else 1
+    # days_since_baseline uses the ACTUAL baseline snapshot date (falls back to
+    # the constant if not supplied). Anchoring to snapshot dates means the
+    # daily-average calc reflects the data the user is looking at, not clock
+    # time on the server.
+    ref_baseline = baseline_date if baseline_date is not None else BASELINE_TARGET_DATE
+    days_since_baseline = max((today - ref_baseline).days, 1) if baseline_df is not None else 1
 
     village_rows = []
     for _, r in current_df.iterrows():
@@ -574,40 +586,57 @@ def build_target_view(current_df, baseline_df, plan_data, today=None):
         tehsil = r["tehsil"]
         total = int(r["khasras"])
         submitted = int(r["submitted"])
-        verified = int(r["verified"])
-        approved = int(r["approved"])
+        verified_stage = int(r["verified"])       # workflow stage: verified but not approved
+        approved_stage = int(r["approved"])       # workflow stage: approved
         patwari = r["patwari"]
 
-        # Look up plan info for this village
+        # "Verified" column semantics per user: everything that has been at least
+        # verified (verified stage + approved stage). Approval implies prior verification.
+        verified_display = verified_stage + approved_stage
+
+        # Look up plan info
         key = (str(tehsil).upper(), str(village))
         plan_info = plan_data.get(key, {})
         expected = plan_info.get("expected_date")
         completed_per_plan = plan_info.get("is_completed_per_plan", False)
 
-        # A village is "actually completed" if approved >= total (strict, per user)
-        is_completed_now = (approved >= total and total > 0)
+        # State determination:
+        # - is_completed_now:      approved fully covers total → Completed section
+        # - is_submitted_complete: fully submitted but not yet fully approved → shown
+        #                          in pending list with "Pending at: Verification/Approval"
+        # - still_needs_submission: submitted < total → patwari active work
+        is_completed_now = (approved_stage >= total and total > 0)
+        is_submitted_complete = (submitted >= total and not is_completed_now and total > 0)
+        still_needs_submission = not is_completed_now and not is_submitted_complete
+
+        # For submitted-complete villages, name the stage they're stuck at.
+        submitted_complete_stage = None
+        if is_submitted_complete:
+            if verified_display >= total:
+                submitted_complete_stage = "Approval"    # all verified, waiting approval
+            else:
+                submitted_complete_stage = "Verification"  # some still need verifying
+
         baseline_submitted = baseline_map.get(key, 0)
 
-        # Determine pending stage if past expected date and not complete
+        # Pending-stage message for delayed still-needs-submission villages
         pending_stage = None
         days_delayed = None
-        if expected is not None and today > expected and not is_completed_now:
+        if expected is not None and today > expected and still_needs_submission:
             days_delayed = (today - expected).days
-            if approved > 0:
+            if approved_stage > 0:
                 pending_stage = "Approved (partial)"
-            elif verified > 0:
+            elif verified_stage > 0:
                 pending_stage = "Verified"
             elif submitted > 0:
                 pending_stage = "Submitted"
             else:
                 pending_stage = "Not Started"
 
-        # Rate ratio: actual daily rate ÷ required daily rate, as percent
+        # Rate ratio only meaningful for still-needs-submission villages
         rate_ratio = None
         band = None
-        if is_completed_now or expected is None:
-            pass  # No band
-        else:
+        if still_needs_submission and expected is not None:
             days_to_expected = (expected - today).days
             if days_to_expected <= 0:
                 rate_ratio = 0.0
@@ -630,11 +659,14 @@ def build_target_view(current_df, baseline_df, plan_data, today=None):
             "patwari": patwari,
             "total": total,
             "submitted": submitted,
-            "verified": verified,
-            "approved": approved,
+            "verified": verified_display,        # verified + approved for display
+            "approved": approved_stage,
             "expected_date": expected,
             "expected_date_str": expected.strftime("%d %b %Y") if expected else "—",
             "is_completed_now": is_completed_now,
+            "is_submitted_complete": is_submitted_complete,
+            "submitted_complete_stage": submitted_complete_stage,
+            "still_needs_submission": still_needs_submission,
             "completed_per_plan": completed_per_plan,
             "pending_stage": pending_stage,
             "days_delayed": days_delayed,
@@ -655,11 +687,10 @@ def build_target_view(current_df, baseline_df, plan_data, today=None):
 
     # ---------- Per-patwari active village + daily average ----------
     # Rule: each patwari's "active" village = the earliest-expected-date village
-    # among their non-completed villages. Only that village gets a colour band.
-    # Other non-completed villages of the same patwari show "To be started after: X".
-    # Once the active village completes (approved >= total), the next earliest one
-    # becomes active. If a village misses its date and isn't complete, it STAYS
-    # active (still colored) until it actually completes.
+    # among those that STILL NEED SUBMISSION work (submitted < total).
+    # A submitted-complete village (submitted >= total but approved < total) is
+    # out of the patwari's hands — they've done their submission part, so we
+    # move to the next one that still needs submissions.
     by_patwari = {}
     for row in village_rows:
         p = row["patwari"] or "(unassigned)"
@@ -671,37 +702,42 @@ def build_target_view(current_df, baseline_df, plan_data, today=None):
             }
         by_patwari[p]["baseline_total"] += row["baseline_submitted"]
         by_patwari[p]["current_total"] += row["submitted"]
-        if not row["is_completed_now"]:
+        if row["still_needs_submission"]:
             by_patwari[p]["pending"].append(row)
 
     for p, info in by_patwari.items():
-        # Sort pending by (has-date first, then date, then village name)
         info["pending"].sort(key=lambda r: (
             0 if r["expected_date"] else 1,
             r["expected_date"].isoformat() if r["expected_date"] else "",
             r["village"],
         ))
         info["active_village"] = info["pending"][0] if info["pending"] else None
-        # Patwari daily average: (delta of their submissions) ÷ days since baseline
         delta = max(info["current_total"] - info["baseline_total"], 0)
         info["daily_avg"] = (delta / days_since_baseline) if days_since_baseline > 0 else 0.0
 
-    # Second pass: apply active-only coloring and waiting messages
+    # Second pass: colouring and status
     for row in village_rows:
         p = row["patwari"] or "(unassigned)"
         info = by_patwari.get(p, {})
         row["patwari_daily_avg"] = info.get("daily_avg", 0.0)
+
         if row["is_completed_now"]:
             row["is_active_village"] = False
             row["waiting_after"] = None
             continue
+        if row["is_submitted_complete"]:
+            # Fully submitted — patwari's part done. No colour, no waiting; show pending stage.
+            row["is_active_village"] = False
+            row["waiting_after"] = None
+            row["band"] = None
+            row["rate_ratio"] = None
+            continue
+        # Still needs submission
         active = info.get("active_village")
         if active is not None and row is active:
             row["is_active_village"] = True
             row["waiting_after"] = None
-            # Keep band + rate_ratio as computed earlier
         else:
-            # Waiting for its turn — no colour, no rate
             row["is_active_village"] = False
             row["waiting_after"] = active["village"] if active else None
             row["band"] = None
@@ -1127,21 +1163,26 @@ def index():
             print(f"[target-view] Failed to load plan file: {e}", file=sys.stderr)
             plan_data = None
         if plan_data is not None:
-            baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE)
+            baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE, current_date=to_date)
             baseline_df = None
+            baseline_snapshot_date = None
             if baseline:
                 b_date, b_path = baseline
+                baseline_snapshot_date = b_date
                 try:
                     baseline_df = load_snapshot(b_path)
                     baseline_info = {"date": b_date, "path": os.path.basename(b_path)}
                 except Exception as e:
                     print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
             try:
-                target_view = build_target_view(current_df, baseline_df, plan_data)
+                target_view = build_target_view(
+                    current_df, baseline_df, plan_data,
+                    today=to_date, baseline_date=baseline_snapshot_date,
+                )
             except Exception as e:
                 print(f"[target-view] build_target_view failed: {e}", file=sys.stderr)
                 target_view = None
-            # Free heavy references (plan_data is small; baseline_df is heavy)
+            # Free heavy references before template render
             baseline_df = None
             import gc; gc.collect()
 
