@@ -30,6 +30,23 @@ app = Flask(__name__)
 SNAPSHOTS_DIR = "snapshots"
 LEGACY_EXCEL = "AGRISTACK.xlsx"
 REFERENCE_PATH = "reference.xlsx"
+# Common misspellings and variants we tolerate as fallbacks so the app doesn't
+# fail if the file is renamed slightly. The primary name is checked first.
+REFERENCE_FALLBACK_NAMES = [
+    "reference.xlsx",
+    "refrence.xlsx",   # very common misspelling
+    "Reference.xlsx",
+    "REFERENCE.xlsx",
+]
+
+
+def _find_reference_path():
+    """Return the actual filename of the reference file at repo root, or None
+    if no candidate exists."""
+    for name in REFERENCE_FALLBACK_NAMES:
+        if os.path.exists(name):
+            return name
+    return None
 
 # Target Based view configuration
 DEADLINE_DATE = date(2026, 9, 30)          # District-wide plan deadline
@@ -378,20 +395,30 @@ def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE, current_
 
 
 def load_reference():
-    """Read reference.xlsx and return a DataFrame with static columns:
-    tehsil, village, patwari, checker, khasras. Returns None if no reference
-    file exists. Cache is keyed on file mtime so live edits invalidate."""
-    if not os.path.exists(REFERENCE_PATH):
+    """Read the reference file (reference.xlsx or a known misspelling) and
+    return a DataFrame with static columns: tehsil, village, patwari, checker,
+    khasras. Returns None if no reference file exists. Cache is keyed on the
+    file's mtime so live edits invalidate."""
+    ref_path = _find_reference_path()
+    if ref_path is None:
         return None
-    mtime = os.path.getmtime(REFERENCE_PATH)
-    cache_key = (REFERENCE_PATH, mtime)
+    mtime = os.path.getmtime(ref_path)
+    cache_key = (ref_path, mtime)
     if cache_key in _reference_cache:
         return _reference_cache[cache_key]
-    xl = pd.ExcelFile(REFERENCE_PATH)
+    xl = pd.ExcelFile(ref_path)
     sheet = _pick_sheet(xl)
     df = pd.read_excel(xl, sheet_name=sheet)
     cols = _detect_columns(df)
-    # Extract only the static columns needed for merge
+    missing = [c for c in ("tehsil", "village", "patwari", "khasras") if c not in cols]
+    if missing:
+        raise RuntimeError(
+            f"{ref_path} is missing required columns: {missing}. "
+            f"Found columns in sheet {sheet!r}: {df.columns.tolist()}. "
+            f"Detected mapping: {cols}. "
+            f"Please make sure the reference file has columns for TEHSIL, VILLAGE, "
+            f"CONCERNED PATWARI, and TOTAL KHASRAS (variants of these names also work)."
+        )
     result = pd.DataFrame({
         "tehsil": df[cols["tehsil"]].astype(str).str.strip().str.upper(),
         "village": df[cols["village"]].astype(str).str.strip(),
@@ -400,7 +427,7 @@ def load_reference():
         "checker": df[cols["checker"]].astype(str).str.strip().replace({"nan": "", "None": ""}) if "checker" in cols else "",
     })
     result = result[(result["village"] != "") & (result["village"].str.lower() != "nan")]
-    print(f"[reference] Loaded {len(result)} villages from {REFERENCE_PATH}", file=sys.stderr)
+    print(f"[reference] Loaded {len(result)} villages from {ref_path}", file=sys.stderr)
     _reference_cache[cache_key] = result
     return result
 
@@ -412,8 +439,9 @@ def _load_report_and_merge(path):
     if ref is None:
         raise RuntimeError(
             f"Snapshot '{os.path.basename(path)}' is in REPORT format (no patwari/khasras "
-            f"columns) but no reference.xlsx was found in the repo root. Please upload "
-            f"reference.xlsx containing tehsil, village, patwari, checker, and TOTAL KHASRAS."
+            f"columns) but no reference file was found at repo root. Please upload "
+            f"reference.xlsx (or refrence.xlsx / Reference.xlsx — spelling variants accepted) "
+            f"containing tehsil, village, patwari, checker, and TOTAL KHASRAS."
         )
     xl = pd.ExcelFile(path)
     sheet = _pick_sheet(xl)
@@ -1629,10 +1657,7 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
         ws = wb.create_sheet("CHECKER WISE")
         headers = ["S.NO", "CHECKER", "SUB-DIVISION", "VILLAGES", "TOTAL SURVEY NOS",
                    "SUBMITTED", "VERIFIED + APPROVED", "% COMPLETION"]
-        if additions_hdr:
-            headers.append(additions_hdr)
         write_hdr(ws, headers)
-        additions_col = len(headers) if additions_hdr else None
         # Formula note as row 2 (comment above table)
         note_row = 2
         ws.cell(row=note_row, column=1, value="% Completion = (Verified + Approved + Seek Clarification) ÷ Submitted × 100").alignment = left
@@ -1644,16 +1669,11 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
             vals = [i, row["name"], row["subdivision"], row["villages_list"],
                     row["total"], row["submitted"], row["verified_plus_approved"], round(row["pct"], 2)]
             aligns = [center, left, left, left, center, center, center, center]
-            if additions_hdr:
-                vals.append(row["additions"] if row["additions"] is not None else "—")
-                aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
                 c.alignment = a; c.font = body_font; c.border = border
                 if ci in (5, 6, 7): c.number_format = "#,##0"
                 if ci == 8: c.number_format = '0.00"%"'
-                if additions_col and ci == additions_col and isinstance(v, int):
-                    c.number_format = "+#,##0;-#,##0;0"
         ct = views.get("checker_totals")
         if ct:
             pt = data_start + len(views["checker_rows"])
@@ -1662,17 +1682,12 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
             ws.cell(row=pt, column=6, value=ct["submitted"]).alignment = center
             ws.cell(row=pt, column=7, value=ct["verified_plus_approved"]).alignment = center
             ws.cell(row=pt, column=8, value=round(ct["pct"], 2)).alignment = center
-            if additions_col:
-                ws.cell(row=pt, column=additions_col, value=ct["additions"] if ct["additions"] is not None else "—").alignment = center
             for c in range(1, len(headers) + 1):
                 cc = ws.cell(row=pt, column=c)
                 cc.font = tot_font; cc.fill = tot_fill; cc.border = border
                 if c in (5, 6, 7): cc.number_format = "#,##0"
                 if c == 8: cc.number_format = '0.00"%"'
-                if additions_col and c == additions_col and isinstance(cc.value, int):
-                    cc.number_format = "+#,##0;-#,##0;0"
         widths = [7, 32, 14, 46, 16, 14, 18, 14]
-        if additions_hdr: widths.append(22)
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = f"A{data_start}"
@@ -1761,13 +1776,16 @@ def healthz():
 def debug_files():
     """Diagnostic: shows exactly what files the running app sees in the
     filesystem — the same information has_plan_file() uses. Handy when the
-    Target Based view toggle isn't appearing."""
+    Target Based view toggle isn't appearing, or a 500 error hits after a
+    reference file update."""
     lines = []
     lines.append(f"Working directory: {os.getcwd()}")
     lines.append(f"SNAPSHOTS_DIR: {SNAPSHOTS_DIR}")
     lines.append(f"SNAPSHOTS_DIR exists: {os.path.isdir(SNAPSHOTS_DIR)}")
     lines.append("")
-    lines.append(f"reference.xlsx present in repo root: {os.path.exists(REFERENCE_PATH)}")
+    lines.append(f"reference file present at repo root: {_find_reference_path() is not None}")
+    if _find_reference_path():
+        lines.append(f"  found as: {_find_reference_path()!r}")
     lines.append("")
     lines.append("Contents of snapshots/ folder:")
     if os.path.isdir(SNAPSHOTS_DIR):
@@ -1780,9 +1798,57 @@ def debug_files():
         lines.append("  (directory does not exist)")
     lines.append("")
     lines.append(f"has_plan_file() returns: {has_plan_file()}")
-    lines.append(f"all_snapshots() returns: {[(d.isoformat(), os.path.basename(p)) for d, p in all_snapshots()]}")
+    try:
+        lines.append(f"all_snapshots() returns: {[(d.isoformat(), os.path.basename(p)) for d, p in all_snapshots()]}")
+    except Exception as e:
+        lines.append(f"all_snapshots() ERROR: {e}")
 
-    # === Template diagnostic ===
+    # === Reference file diagnostic ===
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append("REFERENCE.XLSX DIAGNOSTIC")
+    lines.append("=" * 60)
+    if _find_reference_path():
+        ref_actual_path = _find_reference_path()
+        lines.append(f"Inspecting: {ref_actual_path}")
+        try:
+            xl_ref = pd.ExcelFile(ref_actual_path)
+            lines.append(f"Sheet names in reference.xlsx: {xl_ref.sheet_names}")
+            sheet = _pick_sheet(xl_ref)
+            lines.append(f"Picked sheet: {sheet!r}")
+            df_ref = pd.read_excel(xl_ref, sheet_name=sheet)
+            lines.append(f"Rows × cols: {df_ref.shape[0]} × {df_ref.shape[1]}")
+            lines.append(f"Raw column headers: {df_ref.columns.tolist()}")
+            try:
+                cols = _detect_columns(df_ref)
+                lines.append(f"Column detection result: {cols}")
+                required = ("tehsil", "village", "patwari", "khasras")
+                missing = [c for c in required if c not in cols]
+                if missing:
+                    lines.append(f"→ MISSING required columns: {missing}")
+                    lines.append(f"   The reference file must contain columns matching:")
+                    lines.append(f"     tehsil    (TEHSIL / TEHSIL NAME / tehsil)")
+                    lines.append(f"     village   (VILLAGE / VILLAGE NAME / village)")
+                    lines.append(f"     patwari   (CONCERNED PATWARI / PATWARI / patwari name)")
+                    lines.append(f"     khasras   (TOTAL KHASRAS / TOTAL SURVEY NOS / khasras)")
+                else:
+                    lines.append(f"→ All required columns detected. reference.xlsx should load fine.")
+                try:
+                    ref = load_reference()
+                    if ref is not None:
+                        lines.append(f"load_reference() succeeded: {len(ref)} rows")
+                    else:
+                        lines.append(f"load_reference() returned None")
+                except Exception as e:
+                    lines.append(f"load_reference() ERROR: {type(e).__name__}: {e}")
+            except Exception as e:
+                lines.append(f"Column detection ERROR: {type(e).__name__}: {e}")
+        except Exception as e:
+            lines.append(f"Failed to open reference.xlsx: {type(e).__name__}: {e}")
+    else:
+        lines.append("Reference file NOT FOUND. Accepted names: " + ", ".join(REFERENCE_FALLBACK_NAMES))
+
+    # === Template file diagnostic ===
     lines.append("")
     lines.append("=" * 60)
     lines.append("TEMPLATE FILE DIAGNOSTIC")
