@@ -359,6 +359,31 @@
     min-width: 260px;
     margin-left: 6px;
   }
+
+  /* Bulk action bar — sticks near the bottom of the viewport while scrolling */
+  .bulk-action-bar {
+    position: sticky;
+    bottom: 16px;
+    z-index: 100;
+    margin: 16px 0;
+    padding: 12px 18px;
+    background: #E8EEDE;
+    border: 1px solid #B8C7A6;
+    border-left: 4px solid #4A8C5F;
+    border-radius: 3px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.10);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .bulk-action-bar .selected-count {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    margin-right: auto;
+    letter-spacing: 0.02em;
+  }
 </style>
 </head>
 <body>
@@ -789,9 +814,10 @@
     </div>
     {% elif mode == 'pending' %}
     <div class="pending-meta">
-      Showing only villages that are not yet marked complete. Tick <strong>Completed?</strong> to mark a
-      village done — you'll be prompted for a password, and it disappears from this list. Use the
-      <strong>Manage completed villages</strong> panel at the bottom to restore any that were marked in error.
+      Showing only villages that are not yet marked complete. Tick <strong>Completed?</strong> on any
+      number of rows — use the header checkbox to select all — then click
+      <strong>Mark selected as complete</strong> in the action bar (one password prompt for the batch).
+      Use the <strong>Manage completed villages</strong> panel at the bottom to restore any that were marked in error.
     </div>
     <div class="table-wrap">
       <table>
@@ -806,7 +832,12 @@
             <th style="width:100px">Verified</th>
             <th style="width:100px">Approved</th>
             {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
-            <th style="width:100px">Completed?</th>
+            <th style="width:110px">
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600">
+                <input type="checkbox" id="select-all-cb" title="Select all pending villages" style="width:16px;height:16px;cursor:pointer">
+                Completed?
+              </label>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -844,6 +875,13 @@
           </tr>
         </tfoot>
       </table>
+    </div>
+
+    <!-- Bulk action bar — appears when any row is ticked -->
+    <div class="bulk-action-bar" id="bulk-action-bar" style="display:none">
+      <span class="selected-count" id="selected-count">0 villages selected</span>
+      <button type="button" id="mark-selected" class="dl-btn">Mark selected as complete</button>
+      <button type="button" id="clear-selection" class="dl-btn secondary">Clear</button>
     </div>
 
     <!-- Manage completed villages: password-gated dropdown to restore a village -->
@@ -936,41 +974,99 @@
     }
   }
 
-  // === Mark-complete checkbox handlers (Pending villages progress mode) ===
+  // === Mark-complete: multi-select mode ===
+  // Users tick checkboxes on any number of rows, then click "Mark selected"
+  // once to mark them all in a single GitHub commit. The action bar is
+  // sticky at the bottom of the viewport so it stays visible while scrolling.
   const markCheckboxes = document.querySelectorAll('.mark-complete-cb');
-  markCheckboxes.forEach(cb => {
-    cb.addEventListener('change', async (e) => {
-      if (!e.target.checked) return; // Only fires on check → complete
-      const tehsil = e.target.dataset.tehsil;
-      const village = e.target.dataset.village;
-      const password = window.prompt(`Password to mark "${village}" (${tehsil}) as completed:`);
-      if (!password) {
-        e.target.checked = false;
-        return;
+  const selectAllCb = document.getElementById('select-all-cb');
+  const bulkBar = document.getElementById('bulk-action-bar');
+  const selectedCountEl = document.getElementById('selected-count');
+  const markSelectedBtn = document.getElementById('mark-selected');
+  const clearSelectionBtn = document.getElementById('clear-selection');
+
+  function updateBulkBar() {
+    if (!bulkBar) return;
+    const checked = document.querySelectorAll('.mark-complete-cb:checked');
+    const count = checked.length;
+    if (count === 0) {
+      bulkBar.style.display = 'none';
+    } else {
+      bulkBar.style.display = 'flex';
+      selectedCountEl.textContent = `${count} village${count !== 1 ? 's' : ''} selected`;
+    }
+    // Sync select-all state — checked if all are, unchecked if none, indeterminate if partial
+    if (selectAllCb) {
+      const total = markCheckboxes.length;
+      if (count === 0) {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = false;
+      } else if (count === total) {
+        selectAllCb.checked = true;
+        selectAllCb.indeterminate = false;
+      } else {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = true;
       }
-      e.target.disabled = true;
+    }
+  }
+
+  markCheckboxes.forEach(cb => {
+    cb.addEventListener('change', updateBulkBar);
+  });
+
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', () => {
+      const shouldCheck = selectAllCb.checked;
+      markCheckboxes.forEach(cb => { cb.checked = shouldCheck; });
+      updateBulkBar();
+    });
+  }
+
+  if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener('click', () => {
+      markCheckboxes.forEach(cb => { cb.checked = false; });
+      updateBulkBar();
+    });
+  }
+
+  if (markSelectedBtn) {
+    markSelectedBtn.addEventListener('click', async () => {
+      const checked = Array.from(document.querySelectorAll('.mark-complete-cb:checked'));
+      if (!checked.length) return;
+      const villages = checked.map(cb => ({
+        tehsil: cb.dataset.tehsil,
+        village: cb.dataset.village,
+      }));
+      const noun = villages.length === 1 ? 'village' : 'villages';
+      const password = window.prompt(
+        `Password to mark ${villages.length} ${noun} as completed:`
+      );
+      if (!password) return;
+      markSelectedBtn.disabled = true;
+      const originalLabel = markSelectedBtn.textContent;
+      markSelectedBtn.textContent = 'Saving to GitHub…';
       try {
         const resp = await fetch('/api/mark-complete', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({password, action: 'mark', tehsil, village}),
+          body: JSON.stringify({password, action: 'mark', villages}),
         });
         const data = await resp.json();
         if (!resp.ok) {
           alert('Could not mark complete: ' + (data.error || `HTTP ${resp.status}`));
-          e.target.checked = false;
-          e.target.disabled = false;
+          markSelectedBtn.disabled = false;
+          markSelectedBtn.textContent = originalLabel;
           return;
         }
-        // Success — reload so the village disappears from the list
         window.location.reload();
       } catch (err) {
         alert('Network error: ' + err.message);
-        e.target.checked = false;
-        e.target.disabled = false;
+        markSelectedBtn.disabled = false;
+        markSelectedBtn.textContent = originalLabel;
       }
     });
-  });
+  }
 
   // === Manage completed villages panel ===
   const manageToggle = document.getElementById('manage-toggle');
