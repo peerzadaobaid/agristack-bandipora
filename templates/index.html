@@ -286,6 +286,79 @@
   }
   .target-meta strong { color: var(--ink); font-weight: 600; }
   .target-meta .kv { color: var(--mute); font-size: 12px; margin-left: 4px; }
+
+  /* Pending villages progress meta banner */
+  .pending-meta {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ink);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.55;
+  }
+  .pending-meta strong { color: var(--ink); font-weight: 600; }
+
+  /* Mark-complete checkbox styling */
+  .mark-complete-cb {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--pos, #4A8C5F);
+  }
+
+  /* Manage completed villages panel */
+  .manage-completed {
+    margin-top: 22px;
+    padding: 14px 16px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+  }
+  .manage-toggle-btn {
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    padding: 8px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    letter-spacing: 0.02em;
+    transition: background 140ms;
+  }
+  .manage-toggle-btn:hover { background: var(--tint-good, #E8EEDE); }
+  .manage-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--rule);
+  }
+  .manage-note {
+    font-size: 12.5px;
+    color: var(--mute);
+    margin-bottom: 10px;
+  }
+  .manage-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .manage-row label {
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .manage-row select {
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    border: 1px solid var(--rule);
+    background: white;
+    color: var(--text);
+    min-width: 260px;
+    margin-left: 6px;
+  }
 </style>
 </head>
 <body>
@@ -293,12 +366,12 @@
 <div class="wrap">
   <div class="top-bar"><div class="wordmark">AgriStack</div></div>
 
-  {% if plan_available %}
+  {% if completion_available %}
   <div class="mode-toggle-bar">
     <span class="toggle-hint">Switch layout:</span>
     <label class="toggle-label">
-      <input type="checkbox" id="mode-toggle-checkbox" {% if mode == 'target' %}checked{% endif %}>
-      <span class="toggle-name">Target Based view</span>
+      <input type="checkbox" id="mode-toggle-checkbox" {% if mode == 'pending' %}checked{% endif %}>
+      <span class="toggle-name">Pending villages progress</span>
     </label>
   </div>
   {% endif %}
@@ -377,8 +450,8 @@
     {% if mode == 'default' %}
     <button class="tab" data-target="overall">Overall All</button>
     <button class="tab" data-target="patwari">Patwari Wise</button>
-    {% endif %}
     {% if checker_rows %}<button class="tab" data-target="checker">Checker Wise</button>{% endif %}
+    {% endif %}
     <button class="tab" data-target="village">Village Wise</button>
   </div>
 
@@ -435,15 +508,12 @@
         </tfoot>
       </table>
     </div>
-    {% elif mode == 'target' and target_view %}
-    <div class="target-meta">
-      <strong>Target Based view</strong> — plan deadline
-      <strong>{{ target_view.meta.deadline.strftime("%d %b %Y") }}</strong>
-      &middot; {{ target_view.meta.days_to_deadline }} days remaining
-      &middot; baseline
-      <strong>{{ target_view.meta.baseline_target_date.strftime("%d %b %Y") }}</strong>
-      ({{ target_view.meta.days_since_baseline }} days since).
-      Row colour = green ≥ 80%, yellow 50–79%, red &lt; 50% of required rate.
+    {% elif mode == 'pending' %}
+    <div class="pending-meta">
+      <strong>Pending villages progress</strong> — showing only villages that are not yet marked complete
+      ({{ tehsil_rows|length }} tehsil{% if tehsil_rows|length != 1 %}s{% endif %} with pending work,
+      {{ village_rows|length }} village{% if village_rows|length != 1 %}s{% endif %} pending,
+      {{ completed_count }} already marked complete).
     </div>
     <div class="table-wrap">
       <table>
@@ -451,40 +521,37 @@
           <tr>
             <th style="width:55px">S.NO</th>
             <th>Tehsil</th>
-            <th style="width:80px">Villages</th>
-            <th style="width:130px">Total Survey Nos</th>
-            <th style="width:110px">Submitted</th>
-            <th style="width:100px">% Completion</th>
-            <th style="width:100px">% Approved</th>
-            <th style="width:130px">Villages Completed</th>
-            {% for wc in target_view.window_columns %}
-            <th style="width:120px">{{ wc.header }}</th>
-            {% endfor %}
-            <th style="width:110px">Rate Ratio</th>
+            <th style="width:100px">Villages</th>
+            <th style="width:150px">Total Survey Nos</th>
+            <th style="width:120px">Submitted</th>
+            <th style="width:130px">% Completion</th>
+            <th style="width:120px">% Approved</th>
           </tr>
         </thead>
         <tbody>
-          {% for row in target_view.tehsil_rows %}
-          <tr{% if row.band %} class="tband-{{ row.band }}"{% endif %}>
+          {% for row in tehsil_rows %}
+          <tr>
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.tehsil }}</td>
-            <td class="num">{{ row.villages }}</td>
+            <td class="num">{{ "{:,}".format(row.villages) }}</td>
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
             <td class="pct">{{ "%.2f"|format(row.pct_approved) }}%</td>
-            <td class="num">{{ row.villages_completed }} / {{ row.villages }}</td>
-            {% for wc in target_view.window_columns %}
-            <td class="num">{{ row.windows[wc.label] }}</td>
-            {% endfor %}
-            <td class="pct">
-              {% if row.rate_ratio is none %}—
-              {% else %}{{ "%.1f"|format(row.rate_ratio) }}%
-              {% endif %}
-            </td>
           </tr>
           {% endfor %}
         </tbody>
+        <tfoot>
+          <tr>
+            <td></td>
+            <td>TOTAL (Pending)</td>
+            <td class="num">{{ "{:,}".format(grand.villages) }}</td>
+            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+            <td class="pct">{{ "%.2f"|format(grand.overall_pct) }}%</td>
+            <td class="pct">{{ "%.2f"|format(grand.overall_pct_approved) }}%</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
     {% endif %}
@@ -611,7 +678,7 @@
   {% endif %}
 
   <!-- === CHECKER WISE === -->
-  {% if checker_rows %}
+  {% if mode == 'default' and checker_rows %}
   <section id="checker" class="panel">
     <div class="metric-note">
       <strong>% Completion</strong> = (Verified + Approved + Seek Clarification) ÷ Submitted × 100. The <strong>Verified + Approved</strong> column shows work the checker has passed; Seek Clarification is included in the % because it's also work the checker has processed.
@@ -720,74 +787,89 @@
         </tfoot>
       </table>
     </div>
-    {% elif mode == 'target' and target_view %}
-    <div class="target-meta">
-      Sorted by <strong>Expected Date of Completion</strong> — earliest first, then completed villages at the bottom.
-      Each patwari's <strong>active village</strong> (earliest date, not yet completed) is coloured
-      green ≥ 80%, yellow 50–79%, red &lt; 50% of required daily rate. Their other pending villages show
-      "To be started after…" with no colour until the active one completes.
-      Delayed active villages show which stage they're stuck at.
+    {% elif mode == 'pending' %}
+    <div class="pending-meta">
+      Showing only villages that are not yet marked complete. Tick <strong>Completed?</strong> to mark a
+      village done — you'll be prompted for a password, and it disappears from this list. Use the
+      <strong>Manage completed villages</strong> panel at the bottom to restore any that were marked in error.
     </div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
             <th style="width:55px">S.NO</th>
-            <th style="width:100px">Tehsil</th>
+            <th style="width:110px">Tehsil</th>
             <th>Village</th>
-            <th style="width:110px">Total</th>
-            <th style="width:170px">Patwari</th>
-            <th style="width:100px">Patwari<br>Avg/day</th>
-            <th style="width:95px">Submitted</th>
-            <th style="width:90px">Verified</th>
-            <th style="width:90px">Approved</th>
-            <th style="width:120px">Expected Date</th>
-            <th style="width:230px">Status</th>
-            <th style="width:80px">Rate</th>
+            <th style="width:140px">Total Survey Nos</th>
+            <th style="width:190px">Name of Patwari</th>
+            <th style="width:110px">Submitted</th>
+            <th style="width:100px">Verified</th>
+            <th style="width:100px">Approved</th>
+            {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+            <th style="width:100px">Completed?</th>
           </tr>
         </thead>
         <tbody>
-          {% set completed_started = namespace(v=False) %}
-          {% for row in target_view.village_rows %}
-            {% if row.is_completed_now and not completed_started.v %}
-              {% set completed_started.v = True %}
-              <tr class="completed-divider">
-                <td colspan="12">— Completed villages —</td>
-              </tr>
-            {% endif %}
-            <tr{% if row.is_completed_now %} class="tband-completed"{% elif row.band %} class="tband-{{ row.band }}"{% endif %}>
-              <td class="center">{{ loop.index }}</td>
-              <td>{{ row.tehsil }}</td>
-              <td>{{ row.village }}</td>
-              <td class="num">{{ "{:,}".format(row.total) }}</td>
-              <td>{{ row.patwari }}</td>
-              <td class="num">{{ "%.1f"|format(row.patwari_daily_avg) }}</td>
-              <td class="num">{{ "{:,}".format(row.submitted) }}</td>
-              <td class="num">{{ "{:,}".format(row.verified) }}</td>
-              <td class="num">{{ "{:,}".format(row.approved) }}</td>
-              <td>{{ row.expected_date_str }}</td>
-              <td class="status-cell{% if row.is_completed_now %} completed{% elif row.is_submitted_complete %} submitted-complete{% elif row.waiting_after %} waiting{% elif row.days_delayed %} delayed{% else %} ontrack{% endif %}">
-                {% if row.is_completed_now %}
-                  Completed
-                {% elif row.is_submitted_complete %}
-                  Pending at: {{ row.submitted_complete_stage }}
-                {% elif row.waiting_after %}
-                  To be started after: {{ row.waiting_after }}
-                {% elif row.days_delayed %}
-                  Pending at: {{ row.pending_stage }} · {{ row.days_delayed }} day{% if row.days_delayed != 1 %}s{% endif %} delayed
-                {% else %}
-                  On track
-                {% endif %}
-              </td>
-              <td class="pct">
-                {% if row.rate_ratio is none %}—
-                {% else %}{{ "%.1f"|format(row.rate_ratio) }}%
-                {% endif %}
-              </td>
-            </tr>
+          {% for row in village_rows %}
+          <tr>
+            <td class="center">{{ loop.index }}</td>
+            <td>{{ row.tehsil }}</td>
+            <td>{{ row.village }}</td>
+            <td class="num">{{ "{:,}".format(row.total) }}</td>
+            <td>{{ row.patwari }}</td>
+            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+            <td class="num">{{ "{:,}".format(row.verified) }}</td>
+            <td class="num">{{ "{:,}".format(row.approved) }}</td>
+            {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+            <td class="center">
+              <input type="checkbox" class="mark-complete-cb"
+                     data-tehsil="{{ row.tehsil }}" data-village="{{ row.village }}"
+                     aria-label="Mark {{ row.village }} complete">
+            </td>
+          </tr>
           {% endfor %}
         </tbody>
+        <tfoot>
+          <tr>
+            <td></td>
+            <td></td>
+            <td>TOTAL (Pending)</td>
+            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
+            <td></td>
+            <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+            <td class="num">{{ "{:,}".format(overall_totals.verified) }}</td>
+            <td class="num">{{ "{:,}".format(overall_totals.approved) }}</td>
+            {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
+            <td></td>
+          </tr>
+        </tfoot>
       </table>
+    </div>
+
+    <!-- Manage completed villages: password-gated dropdown to restore a village -->
+    <div class="manage-completed">
+      <button type="button" id="manage-toggle" class="manage-toggle-btn">
+        Manage completed villages ({{ completed_count }})
+      </button>
+      <div id="manage-panel" class="manage-panel" style="display:none">
+        {% if completed_display %}
+        <div class="manage-note">
+          Restore a village so it re-appears in the Pending list. You'll need the password.
+        </div>
+        <div class="manage-row">
+          <label>Village to restore:
+            <select id="unmark-village">
+              {% for cv in completed_display %}
+              <option value="{{ cv.tehsil }}|{{ cv.village }}">{{ cv.tehsil }} &nbsp;/&nbsp; {{ cv.village }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="button" id="do-unmark" class="dl-btn">Restore as pending</button>
+        </div>
+        {% else %}
+        <div class="manage-note">No villages have been marked complete yet.</div>
+        {% endif %}
+      </div>
     </div>
     {% endif %}
   </section>
@@ -828,28 +910,105 @@
     });
   });
 
-  // Target Based view toggle: navigates to a URL with ?mode=target and remembers
-  // the choice in localStorage so subsequent visits stay in that mode.
+  // Pending villages progress toggle: navigates to a URL with ?mode=pending and
+  // remembers the choice in localStorage so subsequent visits stay in that mode.
+  // 'target' is accepted as a legacy alias.
   const modeToggle = document.getElementById('mode-toggle-checkbox');
   if (modeToggle) {
     const url = new URL(window.location.href);
-    const currentMode = url.searchParams.get('mode') === 'target' ? 'target' : 'default';
+    const urlMode = url.searchParams.get('mode');
     const remembered = localStorage.getItem('view-mode');
+    const isPendingRemembered = remembered === 'pending' || remembered === 'target';
 
-    // If nothing in URL but localStorage says target, redirect once.
-    if (!url.searchParams.get('mode') && remembered === 'target') {
-      url.searchParams.set('mode', 'target');
+    // If nothing in URL but localStorage says pending, redirect once.
+    if (!urlMode && isPendingRemembered) {
+      url.searchParams.set('mode', 'pending');
       window.location.replace(url.toString());
     } else {
       modeToggle.addEventListener('change', () => {
-        const target = modeToggle.checked;
-        localStorage.setItem('view-mode', target ? 'target' : 'default');
+        const isPending = modeToggle.checked;
+        localStorage.setItem('view-mode', isPending ? 'pending' : 'default');
         const u = new URL(window.location.href);
-        if (target) u.searchParams.set('mode', 'target');
+        if (isPending) u.searchParams.set('mode', 'pending');
         else u.searchParams.delete('mode');
         window.location.assign(u.toString());
       });
     }
+  }
+
+  // === Mark-complete checkbox handlers (Pending villages progress mode) ===
+  const markCheckboxes = document.querySelectorAll('.mark-complete-cb');
+  markCheckboxes.forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      if (!e.target.checked) return; // Only fires on check → complete
+      const tehsil = e.target.dataset.tehsil;
+      const village = e.target.dataset.village;
+      const password = window.prompt(`Password to mark "${village}" (${tehsil}) as completed:`);
+      if (!password) {
+        e.target.checked = false;
+        return;
+      }
+      e.target.disabled = true;
+      try {
+        const resp = await fetch('/api/mark-complete', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({password, action: 'mark', tehsil, village}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          alert('Could not mark complete: ' + (data.error || `HTTP ${resp.status}`));
+          e.target.checked = false;
+          e.target.disabled = false;
+          return;
+        }
+        // Success — reload so the village disappears from the list
+        window.location.reload();
+      } catch (err) {
+        alert('Network error: ' + err.message);
+        e.target.checked = false;
+        e.target.disabled = false;
+      }
+    });
+  });
+
+  // === Manage completed villages panel ===
+  const manageToggle = document.getElementById('manage-toggle');
+  const managePanel = document.getElementById('manage-panel');
+  if (manageToggle && managePanel) {
+    manageToggle.addEventListener('click', () => {
+      managePanel.style.display = managePanel.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+
+  const unmarkBtn = document.getElementById('do-unmark');
+  const unmarkSelect = document.getElementById('unmark-village');
+  if (unmarkBtn && unmarkSelect) {
+    unmarkBtn.addEventListener('click', async () => {
+      const val = unmarkSelect.value;
+      if (!val) return;
+      const [tehsil, village] = val.split('|');
+      const password = window.prompt(`Password to restore "${village}" (${tehsil}) as pending:`);
+      if (!password) return;
+      unmarkBtn.disabled = true;
+      try {
+        const resp = await fetch('/api/mark-complete', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({password, action: 'unmark', tehsil, village}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          alert('Could not restore: ' + (data.error || `HTTP ${resp.status}`));
+          unmarkBtn.disabled = false;
+          return;
+        }
+        window.location.reload();
+      } catch (err) {
+        alert('Network error: ' + err.message);
+        unmarkBtn.disabled = false;
+      }
+    });
   }
 
   const subtabs = document.querySelectorAll('.subtab');
