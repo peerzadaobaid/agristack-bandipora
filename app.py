@@ -16,10 +16,15 @@ import os
 import re
 import io
 import sys
+import json
+import base64
+import urllib.request
+import urllib.error
+import threading
 from datetime import datetime, date
 
 import pandas as pd
-from flask import Flask, render_template, request, Response, send_file
+from flask import Flask, render_template, request, Response, send_file, jsonify
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -30,6 +35,27 @@ app = Flask(__name__)
 SNAPSHOTS_DIR = "snapshots"
 LEGACY_EXCEL = "AGRISTACK.xlsx"
 REFERENCE_PATH = "reference.xlsx"
+
+# === Pending villages progress (manual completion tracking) ===
+# Requires GITHUB_TOKEN + GITHUB_REPO env vars to persist across Render restarts.
+# On each mark/unmark, we write the updated JSON to GitHub via API.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "peerzadaobaid/agristack-bandipora").strip()
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
+COMPLETION_PASSWORD = os.environ.get("COMPLETION_PASSWORD", "Peerzada@1674")
+COMPLETED_FILE_PATH = "completed_villages.json"
+
+# In-memory cache of the completed list to avoid hitting GitHub on every request.
+_completed_cache = {
+    "list": None,   # None means "not fetched yet"
+    "sha": None,
+    "lock": threading.Lock(),
+}
+
+
+def has_completion_feature():
+    """Return True if the completion feature is configured (GitHub token set)."""
+    return bool(GITHUB_TOKEN and GITHUB_REPO)
 # Common misspellings and variants we tolerate as fallbacks so the app doesn't
 # fail if the file is renamed slightly. The primary name is checked first.
 REFERENCE_FALLBACK_NAMES = [
@@ -218,6 +244,156 @@ def _is_report_format(df_columns):
 
 _reference_cache = {}
 _plan_cache = {}
+
+
+def _github_api_call(method, path, body=None, timeout=15):
+    """Make an authenticated GitHub API call. Returns parsed JSON response
+    and HTTP status. Raises on non-2xx responses (except 404 for GET, which
+    returns (None, 404)). Handles missing token gracefully."""
+    if not GITHUB_TOKEN:
+        raise RuntimeError("GITHUB_TOKEN not configured — cannot contact GitHub API")
+    url = f"https://api.github.com{path}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "agristack-bandipora-completion",
+    }
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_bytes = resp.read()
+            return (json.loads(body_bytes.decode("utf-8")) if body_bytes else None), resp.status
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and method == "GET":
+            return None, 404
+        err_body = ""
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            pass
+        raise RuntimeError(f"GitHub API {method} {path} → HTTP {e.code}: {err_body[:300]}") from e
+
+
+def _github_read_completed_file():
+    """Read completed_villages.json from GitHub. Returns (list, sha) or ([], None)."""
+    if not has_completion_feature():
+        return [], None
+    resp, status = _github_api_call(
+        "GET",
+        f"/repos/{GITHUB_REPO}/contents/{COMPLETED_FILE_PATH}?ref={GITHUB_BRANCH}",
+    )
+    if status == 404 or resp is None:
+        return [], None
+    try:
+        raw = base64.b64decode(resp["content"]).decode("utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            return [], resp.get("sha")
+        # Normalize entries — expect [{tehsil, village}, ...]
+        cleaned = []
+        for entry in data:
+            if isinstance(entry, dict) and "tehsil" in entry and "village" in entry:
+                cleaned.append({
+                    "tehsil": str(entry["tehsil"]).strip().upper(),
+                    "village": str(entry["village"]).strip(),
+                })
+        return cleaned, resp["sha"]
+    except (ValueError, KeyError) as e:
+        print(f"[completed] failed to parse existing file: {e}", file=sys.stderr)
+        return [], resp.get("sha")
+
+
+def _github_write_completed_file(new_list, sha, commit_message):
+    """Write completed_villages.json to GitHub. sha=None creates the file for the
+    first time; otherwise it's an update. Returns the new SHA."""
+    content = json.dumps(new_list, indent=2, ensure_ascii=False)
+    body = {
+        "message": commit_message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        body["sha"] = sha
+    resp, status = _github_api_call(
+        "PUT",
+        f"/repos/{GITHUB_REPO}/contents/{COMPLETED_FILE_PATH}",
+        body=body,
+    )
+    return resp["content"]["sha"] if resp and "content" in resp else None
+
+
+def load_completed_villages(force_refresh=False):
+    """Return the current list of completed villages [{tehsil, village}, ...].
+    Cached in memory; force_refresh bypasses the cache."""
+    if not has_completion_feature():
+        return []
+    with _completed_cache["lock"]:
+        if _completed_cache["list"] is not None and not force_refresh:
+            return list(_completed_cache["list"])
+        try:
+            lst, sha = _github_read_completed_file()
+            _completed_cache["list"] = lst
+            _completed_cache["sha"] = sha
+            return list(lst)
+        except Exception as e:
+            print(f"[completed] load failed: {e}", file=sys.stderr)
+            # Fall back to empty list rather than crashing the whole page
+            if _completed_cache["list"] is None:
+                _completed_cache["list"] = []
+            return list(_completed_cache["list"])
+
+
+def _mutate_completed(action, tehsil, village):
+    """Add or remove a (tehsil, village) from the completed list. Persists to
+    GitHub with SHA-conflict retry. `action` is 'mark' or 'unmark'."""
+    tehsil = str(tehsil).strip().upper()
+    village = str(village).strip()
+    if not tehsil or not village:
+        raise ValueError("Missing tehsil or village")
+    with _completed_cache["lock"]:
+        for attempt in range(3):
+            # Get latest state — on first attempt use cache, then force refresh on conflict
+            if attempt == 0 and _completed_cache["list"] is not None:
+                current = list(_completed_cache["list"])
+                sha = _completed_cache["sha"]
+            else:
+                current, sha = _github_read_completed_file()
+                _completed_cache["list"] = current
+                _completed_cache["sha"] = sha
+
+            def matches(entry):
+                return entry["tehsil"] == tehsil and entry["village"] == village
+            is_present = any(matches(e) for e in current)
+
+            if action == "mark":
+                if is_present:
+                    return  # Idempotent — already marked
+                new_list = current + [{"tehsil": tehsil, "village": village}]
+                msg = f"Mark {village} ({tehsil}) as completed"
+            else:  # unmark
+                if not is_present:
+                    return
+                new_list = [e for e in current if not matches(e)]
+                msg = f"Restore {village} ({tehsil}) as pending"
+
+            try:
+                new_sha = _github_write_completed_file(new_list, sha, msg)
+                _completed_cache["list"] = new_list
+                _completed_cache["sha"] = new_sha
+                return
+            except RuntimeError as e:
+                # SHA conflict (409) or validation error (422 could mean SHA mismatch)
+                msg_lower = str(e).lower()
+                if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
+                    print(f"[completed] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
+                    continue
+                raise
+        raise RuntimeError("Failed to persist completion change after 3 attempts")
 
 
 def has_plan_file():
@@ -1224,59 +1400,49 @@ def index():
     if not snapshots:
         return "No snapshots found. Add a file to snapshots/ folder.", 500
 
-    # Mode: 'default' (current view) or 'target' (target based view)
-    mode = request.args.get("mode", "default").strip().lower()
-    if mode not in ("default", "target"):
+    # Mode: 'default' (current view) or 'pending' (Pending villages progress view).
+    # 'target' is accepted as an alias for 'pending' for backward compat.
+    raw_mode = request.args.get("mode", "default").strip().lower()
+    if raw_mode in ("pending", "target"):
+        mode = "pending"
+    else:
         mode = "default"
 
     from_date, to_date = resolve_dates(snapshots, request.args.get("from"), request.args.get("to"))
     current_df = load_snapshot(snapshot_for_date(snapshots, to_date))
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
     tehsils_filter = parse_tehsils_param(request.args)
-    views = build_views(current_df, from_df, tehsils_filter)
 
-    # Only touch the plan file when the user actually wants the target view.
-    # In default mode we do a cheap filesystem check so the toggle can render,
-    # but we don't spend memory parsing the Excel.
-    plan_available = has_plan_file()
-    target_view = None
-    baseline_info = None
-    if mode == "target" and plan_available:
+    # Completion feature (Pending villages progress) — cheap availability check
+    # so the toggle can render even when we're not in pending mode.
+    completion_available = has_completion_feature()
+    completed_list = []
+    completed_display = []  # for template dropdown
+
+    if mode == "pending" and completion_available:
         try:
-            plan_data = load_plan_file()
+            completed_list = load_completed_villages()
         except Exception as e:
-            print(f"[target-view] Failed to load plan file: {e}", file=sys.stderr)
-            plan_data = None
-        if plan_data is not None:
-            baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE, current_date=to_date)
-            baseline_df = None
-            baseline_snapshot_date = None
-            if baseline:
-                b_date, b_path = baseline
-                baseline_snapshot_date = b_date
-                try:
-                    baseline_df = load_snapshot(b_path)
-                    baseline_info = {"date": b_date, "path": os.path.basename(b_path)}
-                except Exception as e:
-                    print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
-            try:
-                # Walk through every snapshot between baseline and current to
-                # compute the patwari daily averages transparently (handles
-                # non-monotonic data, sparse snapshots, etc.)
-                patwari_daily_avgs = compute_patwari_daily_avg(
-                    snapshots, baseline_snapshot_date, to_date
-                )
-                target_view = build_target_view(
-                    current_df, baseline_df, plan_data,
-                    today=to_date, baseline_date=baseline_snapshot_date,
-                    patwari_daily_avgs=patwari_daily_avgs,
-                )
-            except Exception as e:
-                print(f"[target-view] build_target_view failed: {e}", file=sys.stderr)
-                target_view = None
-            # Free heavy references before template render
-            baseline_df = None
-            import gc; gc.collect()
+            print(f"[pending] Failed to load completed list: {e}", file=sys.stderr)
+            completed_list = []
+
+        # Filter both current and prior snapshot DataFrames to exclude completed
+        # villages. Everything downstream (tehsil rows, village rows, Additions,
+        # totals) then automatically reflects only pending villages.
+        completed_set = {(cv["tehsil"], cv["village"]) for cv in completed_list}
+        if completed_set:
+            def _is_pending(df):
+                key = df["tehsil"].str.upper().astype(str) + "|" + df["village"].astype(str)
+                excluded = {f"{t}|{v}" for t, v in completed_set}
+                return df[~key.isin(excluded)].copy()
+            current_df = _is_pending(current_df)
+            if from_df is not None:
+                from_df = _is_pending(from_df)
+
+        # Sorted list of {tehsil, village} for the "restore" dropdown
+        completed_display = sorted(completed_list, key=lambda x: (x["tehsil"], x["village"]))
+
+    views = build_views(current_df, from_df, tehsils_filter)
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
@@ -1300,12 +1466,37 @@ def index():
         selected_tehsils=selected_tehsils,
         coloring_active=(tehsils_filter is not None),
         mode=mode,
-        plan_available=plan_available,
-        target_view=target_view,
-        baseline_info=baseline_info,
-        target_deadline=DEADLINE_DATE,
+        completion_available=completion_available,
+        completed_display=completed_display,
+        completed_count=len(completed_list),
         **views,
     )
+
+
+@app.route("/api/mark-complete", methods=["POST"])
+def mark_complete():
+    """Mark or un-mark a village as completed. Requires password."""
+    if not has_completion_feature():
+        return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    action = data.get("action", "mark").strip().lower()
+    tehsil = data.get("tehsil", "")
+    village = data.get("village", "")
+
+    if password != COMPLETION_PASSWORD:
+        return jsonify({"error": "Wrong password."}), 401
+    if action not in ("mark", "unmark"):
+        return jsonify({"error": "action must be 'mark' or 'unmark'."}), 400
+    if not tehsil or not village:
+        return jsonify({"error": "tehsil and village are required."}), 400
+
+    try:
+        _mutate_completed(action, tehsil, village)
+        return jsonify({"success": True, "action": action, "tehsil": str(tehsil).strip().upper(), "village": str(village).strip()})
+    except Exception as e:
+        print(f"[mark-complete] {action} {tehsil}/{village} failed: {e}", file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/farmer-id")
@@ -1847,6 +2038,30 @@ def debug_files():
             lines.append(f"Failed to open reference.xlsx: {type(e).__name__}: {e}")
     else:
         lines.append("Reference file NOT FOUND. Accepted names: " + ", ".join(REFERENCE_FALLBACK_NAMES))
+
+    # === Completion feature diagnostic ===
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append("COMPLETION FEATURE DIAGNOSTIC (Pending villages progress)")
+    lines.append("=" * 60)
+    lines.append(f"GITHUB_TOKEN set: {bool(GITHUB_TOKEN)}")
+    lines.append(f"GITHUB_REPO: {GITHUB_REPO!r}")
+    lines.append(f"GITHUB_BRANCH: {GITHUB_BRANCH!r}")
+    lines.append(f"COMPLETION_PASSWORD is set: {bool(COMPLETION_PASSWORD)} ({'from env' if os.environ.get('COMPLETION_PASSWORD') else 'default'})")
+    lines.append(f"has_completion_feature(): {has_completion_feature()}")
+    if has_completion_feature():
+        try:
+            lst, sha = _github_read_completed_file()
+            lines.append(f"Fetched completed_villages.json from GitHub: {len(lst)} entries" + (f", sha={sha[:8]}..." if sha else " (file does not yet exist — will be created on first mark)"))
+            if lst:
+                for entry in lst[:10]:
+                    lines.append(f"  · {entry['tehsil']} / {entry['village']}")
+                if len(lst) > 10:
+                    lines.append(f"  · ... and {len(lst) - 10} more")
+        except Exception as e:
+            lines.append(f"Failed to fetch completed_villages.json: {type(e).__name__}: {e}")
+    else:
+        lines.append("→ Toggle for 'Pending villages progress' will be HIDDEN until GITHUB_TOKEN is set.")
 
     # === Template file diagnostic ===
     lines.append("")
