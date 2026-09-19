@@ -348,16 +348,14 @@ def load_completed_villages(force_refresh=False):
             return list(_completed_cache["list"])
 
 
-def _mutate_completed(action, tehsil, village):
-    """Add or remove a (tehsil, village) from the completed list. Persists to
-    GitHub with SHA-conflict retry. `action` is 'mark' or 'unmark'."""
-    tehsil = str(tehsil).strip().upper()
-    village = str(village).strip()
-    if not tehsil or not village:
-        raise ValueError("Missing tehsil or village")
+def _mutate_completed_batch(action, villages_list):
+    """Mark or un-mark multiple (tehsil, village) pairs in a single GitHub commit.
+    `villages_list` is a list of {tehsil, village} dicts (already normalized:
+    tehsil uppercased, both stripped). `action` is 'mark' or 'unmark'."""
+    if not villages_list:
+        return {"changed": 0, "skipped": 0}
     with _completed_cache["lock"]:
         for attempt in range(3):
-            # Get latest state — on first attempt use cache, then force refresh on conflict
             if attempt == 0 and _completed_cache["list"] is not None:
                 current = list(_completed_cache["list"])
                 sha = _completed_cache["sha"]
@@ -366,34 +364,67 @@ def _mutate_completed(action, tehsil, village):
                 _completed_cache["list"] = current
                 _completed_cache["sha"] = sha
 
-            def matches(entry):
-                return entry["tehsil"] == tehsil and entry["village"] == village
-            is_present = any(matches(e) for e in current)
+            def is_in(lst, tehsil, village):
+                return any(e["tehsil"] == tehsil and e["village"] == village for e in lst)
 
+            new_list = list(current)
+            changed = []
+            skipped = 0
+            for v in villages_list:
+                tehsil, village = v["tehsil"], v["village"]
+                present = is_in(new_list, tehsil, village)
+                if action == "mark":
+                    if present:
+                        skipped += 1
+                        continue
+                    new_list.append({"tehsil": tehsil, "village": village})
+                    changed.append(v)
+                else:
+                    if not present:
+                        skipped += 1
+                        continue
+                    new_list = [e for e in new_list if not (e["tehsil"] == tehsil and e["village"] == village)]
+                    changed.append(v)
+
+            if not changed:
+                return {"changed": 0, "skipped": skipped}
+
+            # Build a helpful commit message
             if action == "mark":
-                if is_present:
-                    return  # Idempotent — already marked
-                new_list = current + [{"tehsil": tehsil, "village": village}]
-                msg = f"Mark {village} ({tehsil}) as completed"
-            else:  # unmark
-                if not is_present:
-                    return
-                new_list = [e for e in current if not matches(e)]
-                msg = f"Restore {village} ({tehsil}) as pending"
+                verb = "Mark"
+                tense = "as completed"
+            else:
+                verb = "Restore"
+                tense = "as pending"
+            if len(changed) == 1:
+                c = changed[0]
+                msg = f"{verb} {c['village']} ({c['tehsil']}) {tense}"
+            else:
+                names = ", ".join(f"{c['village']} ({c['tehsil']})" for c in changed[:5])
+                more = f" and {len(changed) - 5} more" if len(changed) > 5 else ""
+                msg = f"{verb} {len(changed)} villages {tense}: {names}{more}"
 
             try:
                 new_sha = _github_write_completed_file(new_list, sha, msg)
                 _completed_cache["list"] = new_list
                 _completed_cache["sha"] = new_sha
-                return
+                return {"changed": len(changed), "skipped": skipped}
             except RuntimeError as e:
-                # SHA conflict (409) or validation error (422 could mean SHA mismatch)
                 msg_lower = str(e).lower()
                 if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
                     print(f"[completed] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
                     continue
                 raise
         raise RuntimeError("Failed to persist completion change after 3 attempts")
+
+
+def _mutate_completed(action, tehsil, village):
+    """Single-village convenience wrapper around _mutate_completed_batch."""
+    tehsil = str(tehsil).strip().upper()
+    village = str(village).strip()
+    if not tehsil or not village:
+        raise ValueError("Missing tehsil or village")
+    return _mutate_completed_batch(action, [{"tehsil": tehsil, "village": village}])
 
 
 def has_plan_file():
@@ -1475,27 +1506,54 @@ def index():
 
 @app.route("/api/mark-complete", methods=["POST"])
 def mark_complete():
-    """Mark or un-mark a village as completed. Requires password."""
+    """Mark or un-mark one or more villages as completed. Requires password.
+    Accepts either the single-village form ({tehsil, village}) or a batch form
+    ({villages: [{tehsil, village}, ...]}). Multiple villages become one commit."""
     if not has_completion_feature():
         return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
     data = request.get_json(silent=True) or {}
     password = data.get("password", "")
     action = data.get("action", "mark").strip().lower()
-    tehsil = data.get("tehsil", "")
-    village = data.get("village", "")
 
     if password != COMPLETION_PASSWORD:
         return jsonify({"error": "Wrong password."}), 401
     if action not in ("mark", "unmark"):
         return jsonify({"error": "action must be 'mark' or 'unmark'."}), 400
-    if not tehsil or not village:
-        return jsonify({"error": "tehsil and village are required."}), 400
+
+    # Prefer the batch form (villages: [...]), fall back to the single form
+    raw_villages = data.get("villages")
+    if not raw_villages:
+        tehsil = data.get("tehsil", "")
+        village = data.get("village", "")
+        if tehsil and village:
+            raw_villages = [{"tehsil": tehsil, "village": village}]
+    if not isinstance(raw_villages, list) or not raw_villages:
+        return jsonify({"error": "villages array (or tehsil+village fields) is required."}), 400
+    if len(raw_villages) > 200:
+        return jsonify({"error": "Too many villages in one request (max 200)."}), 400
+
+    # Normalize
+    normalized = []
+    for v in raw_villages:
+        if not isinstance(v, dict):
+            return jsonify({"error": "each village entry must be an object with tehsil and village."}), 400
+        t = str(v.get("tehsil", "")).strip().upper()
+        vg = str(v.get("village", "")).strip()
+        if not t or not vg:
+            return jsonify({"error": "each village entry needs non-empty tehsil and village."}), 400
+        normalized.append({"tehsil": t, "village": vg})
 
     try:
-        _mutate_completed(action, tehsil, village)
-        return jsonify({"success": True, "action": action, "tehsil": str(tehsil).strip().upper(), "village": str(village).strip()})
+        result = _mutate_completed_batch(action, normalized)
+        return jsonify({
+            "success": True,
+            "action": action,
+            "requested": len(normalized),
+            "changed": result["changed"],
+            "skipped": result["skipped"],
+        })
     except Exception as e:
-        print(f"[mark-complete] {action} {tehsil}/{village} failed: {e}", file=sys.stderr)
+        print(f"[mark-complete] {action} of {len(normalized)} villages failed: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 
