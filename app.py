@@ -44,10 +44,18 @@ GITHUB_REPO = os.environ.get("GITHUB_REPO", "peerzadaobaid/agristack-bandipora")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
 COMPLETION_PASSWORD = os.environ.get("COMPLETION_PASSWORD", "Peerzada@1674")
 COMPLETED_FILE_PATH = "completed_villages.json"
+EXPECTED_DATES_FILE_PATH = "expected_dates.json"
 
 # In-memory cache of the completed list to avoid hitting GitHub on every request.
 _completed_cache = {
     "list": None,   # None means "not fetched yet"
+    "sha": None,
+    "lock": threading.Lock(),
+}
+
+# In-memory cache of the expected-dates map.
+_expected_dates_cache = {
+    "data": None,   # None means "not fetched yet"
     "sha": None,
     "lock": threading.Lock(),
 }
@@ -425,6 +433,141 @@ def _mutate_completed(action, tehsil, village):
     if not tehsil or not village:
         raise ValueError("Missing tehsil or village")
     return _mutate_completed_batch(action, [{"tehsil": tehsil, "village": village}])
+
+
+# === Expected dates (per-village target date) — stored in expected_dates.json ===
+# Structure on GitHub: { "TEHSIL|Village": "YYYY-MM-DD", ... }
+# A missing key means "no target date set". Setting date=null clears the entry.
+
+def _github_read_expected_dates_file():
+    """Read expected_dates.json from GitHub. Returns (dict, sha) or ({}, None)."""
+    if not has_completion_feature():
+        return {}, None
+    resp, status = _github_api_call(
+        "GET",
+        f"/repos/{GITHUB_REPO}/contents/{EXPECTED_DATES_FILE_PATH}?ref={GITHUB_BRANCH}",
+    )
+    if status == 404 or resp is None:
+        return {}, None
+    try:
+        raw = base64.b64decode(resp["content"]).decode("utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}, resp.get("sha")
+        # Validate and normalize entries: keys must contain "|", values must be YYYY-MM-DD
+        cleaned = {}
+        for k, v in data.items():
+            if not isinstance(k, str) or "|" not in k or not isinstance(v, str):
+                continue
+            try:
+                datetime.strptime(v, "%Y-%m-%d")
+                cleaned[k] = v
+            except ValueError:
+                continue
+        return cleaned, resp["sha"]
+    except (ValueError, KeyError) as e:
+        print(f"[expected-dates] failed to parse existing file: {e}", file=sys.stderr)
+        return {}, resp.get("sha")
+
+
+def _github_write_expected_dates_file(new_dict, sha, commit_message):
+    """Write expected_dates.json to GitHub. Returns new SHA."""
+    content = json.dumps(new_dict, indent=2, ensure_ascii=False, sort_keys=True)
+    body = {
+        "message": commit_message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        body["sha"] = sha
+    resp, status = _github_api_call(
+        "PUT",
+        f"/repos/{GITHUB_REPO}/contents/{EXPECTED_DATES_FILE_PATH}",
+        body=body,
+    )
+    return resp["content"]["sha"] if resp and "content" in resp else None
+
+
+def load_expected_dates(force_refresh=False):
+    """Return {'TEHSIL|Village': 'YYYY-MM-DD'} dict of expected dates."""
+    if not has_completion_feature():
+        return {}
+    with _expected_dates_cache["lock"]:
+        if _expected_dates_cache["data"] is not None and not force_refresh:
+            return dict(_expected_dates_cache["data"])
+        try:
+            data, sha = _github_read_expected_dates_file()
+            _expected_dates_cache["data"] = data
+            _expected_dates_cache["sha"] = sha
+            return dict(data)
+        except Exception as e:
+            print(f"[expected-dates] load failed: {e}", file=sys.stderr)
+            if _expected_dates_cache["data"] is None:
+                _expected_dates_cache["data"] = {}
+            return dict(_expected_dates_cache["data"])
+
+
+def _set_expected_dates_batch(changes):
+    """Apply date changes (list of {tehsil, village, date}) in ONE GitHub commit.
+    date=None or "" means 'clear the date' (remove key from dict)."""
+    if not changes:
+        return {"changed": 0}
+    with _expected_dates_cache["lock"]:
+        for attempt in range(3):
+            if attempt == 0 and _expected_dates_cache["data"] is not None:
+                current = dict(_expected_dates_cache["data"])
+                sha = _expected_dates_cache["sha"]
+            else:
+                current, sha = _github_read_expected_dates_file()
+                _expected_dates_cache["data"] = current
+                _expected_dates_cache["sha"] = sha
+
+            new_dict = dict(current)
+            actual_changes = []
+            for c in changes:
+                key = f"{c['tehsil']}|{c['village']}"
+                new_date = c.get("date")
+                if new_date:
+                    # Validate YYYY-MM-DD
+                    try:
+                        datetime.strptime(new_date, "%Y-%m-%d")
+                    except ValueError:
+                        raise ValueError(
+                            f"Invalid date '{new_date}' for {c['village']} — expected YYYY-MM-DD"
+                        )
+                    if new_dict.get(key) != new_date:
+                        new_dict[key] = new_date
+                        actual_changes.append(c)
+                else:
+                    if key in new_dict:
+                        del new_dict[key]
+                        actual_changes.append({**c, "date": None})
+
+            if not actual_changes:
+                return {"changed": 0}
+
+            # Commit message
+            if len(actual_changes) == 1:
+                c = actual_changes[0]
+                if c.get("date"):
+                    msg = f"Set target date for {c['village']} ({c['tehsil']}) to {c['date']}"
+                else:
+                    msg = f"Clear target date for {c['village']} ({c['tehsil']})"
+            else:
+                msg = f"Update target dates for {len(actual_changes)} villages"
+
+            try:
+                new_sha = _github_write_expected_dates_file(new_dict, sha, msg)
+                _expected_dates_cache["data"] = new_dict
+                _expected_dates_cache["sha"] = new_sha
+                return {"changed": len(actual_changes)}
+            except RuntimeError as e:
+                msg_lower = str(e).lower()
+                if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
+                    print(f"[expected-dates] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
+                    continue
+                raise
+        raise RuntimeError("Failed to persist date changes after 3 attempts")
 
 
 def has_plan_file():
@@ -1449,6 +1592,7 @@ def index():
     completion_available = has_completion_feature()
     completed_list = []
     completed_display = []  # for template dropdown
+    expected_dates_map = {}
 
     if mode == "pending" and completion_available:
         try:
@@ -1456,6 +1600,11 @@ def index():
         except Exception as e:
             print(f"[pending] Failed to load completed list: {e}", file=sys.stderr)
             completed_list = []
+        try:
+            expected_dates_map = load_expected_dates()
+        except Exception as e:
+            print(f"[pending] Failed to load expected dates: {e}", file=sys.stderr)
+            expected_dates_map = {}
 
         # Filter both current and prior snapshot DataFrames to exclude completed
         # villages. Everything downstream (tehsil rows, village rows, Additions,
@@ -1474,6 +1623,22 @@ def index():
         completed_display = sorted(completed_list, key=lambda x: (x["tehsil"], x["village"]))
 
     views = build_views(current_df, from_df, tehsils_filter)
+
+    # In pending mode, decorate each village row with expected_date and
+    # days_remaining (relative to the current snapshot date).
+    if mode == "pending" and completion_available:
+        for row in views.get("village_rows", []):
+            key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
+            iso_date = expected_dates_map.get(key)
+            row["expected_date"] = iso_date  # ISO string 'YYYY-MM-DD' or None
+            if iso_date:
+                try:
+                    exp = datetime.strptime(iso_date, "%Y-%m-%d").date()
+                    row["days_remaining"] = (exp - to_date).days
+                except ValueError:
+                    row["days_remaining"] = None
+            else:
+                row["days_remaining"] = None
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
@@ -1502,6 +1667,53 @@ def index():
         completed_count=len(completed_list),
         **views,
     )
+
+
+@app.route("/api/set-dates", methods=["POST"])
+def set_dates():
+    """Batch-set expected completion dates for villages. Requires password.
+    Body: {password, changes: [{tehsil, village, date}]}. date=null clears."""
+    if not has_completion_feature():
+        return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    raw_changes = data.get("changes")
+
+    if password != COMPLETION_PASSWORD:
+        return jsonify({"error": "Wrong password."}), 401
+    if not isinstance(raw_changes, list) or not raw_changes:
+        return jsonify({"error": "changes must be a non-empty list."}), 400
+    if len(raw_changes) > 200:
+        return jsonify({"error": "Too many changes in one request (max 200)."}), 400
+
+    normalized = []
+    for c in raw_changes:
+        if not isinstance(c, dict):
+            return jsonify({"error": "each change must be an object with tehsil, village, date."}), 400
+        t = str(c.get("tehsil", "")).strip().upper()
+        v = str(c.get("village", "")).strip()
+        d = c.get("date")
+        if d is not None:
+            d = str(d).strip() or None
+        if not t or not v:
+            return jsonify({"error": "each change needs non-empty tehsil and village."}), 400
+        if d is not None:
+            try:
+                datetime.strptime(d, "%Y-%m-%d")
+            except ValueError:
+                return jsonify({"error": f"invalid date '{d}' — expected YYYY-MM-DD"}), 400
+        normalized.append({"tehsil": t, "village": v, "date": d})
+
+    try:
+        result = _set_expected_dates_batch(normalized)
+        return jsonify({
+            "success": True,
+            "requested": len(normalized),
+            "changed": result["changed"],
+        })
+    except Exception as e:
+        print(f"[set-dates] failed: {e}", file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/mark-complete", methods=["POST"])
