@@ -384,6 +384,35 @@
     margin-right: auto;
     letter-spacing: 0.02em;
   }
+
+  /* Expected-date input in Village Wise rows */
+  .expected-date-input {
+    font-family: inherit;
+    font-size: 12.5px;
+    padding: 4px 6px;
+    border: 1px solid var(--rule);
+    background: white;
+    color: var(--text);
+    border-radius: 2px;
+    width: 130px;
+    box-sizing: border-box;
+  }
+  .expected-date-input:focus {
+    outline: 1px solid var(--ink);
+    border-color: var(--ink);
+  }
+  .expected-date-input.dirty {
+    background: #FFF7D6;
+    border-color: #C9B575;
+  }
+  .date-cell { text-align: center; }
+  .days-cell {
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text);
+  }
+  .days-cell.days-delayed { color: #B33A3A; font-weight: 500; }
+  .days-cell.days-soon { color: #B8862A; font-weight: 500; }
 </style>
 </head>
 <body>
@@ -814,9 +843,10 @@
     </div>
     {% elif mode == 'pending' %}
     <div class="pending-meta">
-      Showing only villages that are not yet marked complete. Tick <strong>Completed?</strong> on any
-      number of rows — use the header checkbox to select all — then click
-      <strong>Mark selected as complete</strong> in the action bar (one password prompt for the batch).
+      Showing only villages that are not yet marked complete. Set a target
+      <strong>Date of Completion</strong> per village and tick <strong>Completed?</strong> on any rows
+      to mark complete. Then click <strong>Save all changes</strong> in the action bar
+      (one password prompt handles both date changes and completion marks).
       Use the <strong>Manage completed villages</strong> panel at the bottom to restore any that were marked in error.
     </div>
     <div class="table-wrap">
@@ -832,6 +862,8 @@
             <th style="width:100px">Verified</th>
             <th style="width:100px">Approved</th>
             {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
+            <th style="width:150px">Date of Completion</th>
+            <th style="width:130px">Days to Completion</th>
             <th style="width:110px">
               <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600">
                 <input type="checkbox" id="select-all-cb" title="Select all pending villages" style="width:16px;height:16px;cursor:pointer">
@@ -852,6 +884,27 @@
             <td class="num">{{ "{:,}".format(row.verified) }}</td>
             <td class="num">{{ "{:,}".format(row.approved) }}</td>
             {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
+            <td class="date-cell">
+              <input type="date" class="expected-date-input"
+                     data-tehsil="{{ row.tehsil }}"
+                     data-village="{{ row.village }}"
+                     data-original="{{ row.expected_date or '' }}"
+                     value="{{ row.expected_date or '' }}">
+            </td>
+            <td class="days-cell {% if row.days_remaining is not none and row.days_remaining < 0 %}days-delayed{% elif row.days_remaining is not none and row.days_remaining <= 2 %}days-soon{% endif %}"
+                data-tehsil="{{ row.tehsil }}" data-village="{{ row.village }}">
+              {% if row.expected_date and row.days_remaining is not none %}
+                {% if row.days_remaining > 0 %}
+                  {{ row.days_remaining }} day{% if row.days_remaining != 1 %}s{% endif %} remaining
+                {% elif row.days_remaining == 0 %}
+                  Due today
+                {% else %}
+                  Delayed by {{ -row.days_remaining }} day{% if row.days_remaining != -1 %}s{% endif %}
+                {% endif %}
+              {% else %}
+                &mdash;
+              {% endif %}
+            </td>
             <td class="center">
               <input type="checkbox" class="mark-complete-cb"
                      data-tehsil="{{ row.tehsil }}" data-village="{{ row.village }}"
@@ -872,16 +925,18 @@
             <td class="num">{{ "{:,}".format(overall_totals.approved) }}</td>
             {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
             <td></td>
+            <td></td>
+            <td></td>
           </tr>
         </tfoot>
       </table>
     </div>
 
-    <!-- Bulk action bar — appears when any row is ticked -->
+    <!-- Bulk action bar — appears when any row is ticked or a date is changed -->
     <div class="bulk-action-bar" id="bulk-action-bar" style="display:none">
-      <span class="selected-count" id="selected-count">0 villages selected</span>
-      <button type="button" id="mark-selected" class="dl-btn">Mark selected as complete</button>
-      <button type="button" id="clear-selection" class="dl-btn secondary">Clear</button>
+      <span class="selected-count" id="selected-count">0 changes pending</span>
+      <button type="button" id="mark-selected" class="dl-btn">Save all changes</button>
+      <button type="button" id="clear-selection" class="dl-btn secondary">Discard</button>
     </div>
 
     <!-- Manage completed villages: password-gated dropdown to restore a village -->
@@ -974,34 +1029,81 @@
     }
   }
 
-  // === Mark-complete: multi-select mode ===
-  // Users tick checkboxes on any number of rows, then click "Mark selected"
-  // once to mark them all in a single GitHub commit. The action bar is
-  // sticky at the bottom of the viewport so it stays visible while scrolling.
+  // === Mark-complete + set-dates: unified multi-select mode ===
+  // Users can:
+  //  1. Tick "Completed?" checkboxes on any number of rows
+  //  2. Change "Date of Completion" on any number of rows (yellow highlight = unsaved)
+  // Then click "Save all changes" once — a single password prompt handles both
+  // sets of changes, each committed to its own JSON file on GitHub.
   const markCheckboxes = document.querySelectorAll('.mark-complete-cb');
+  const dateInputs = document.querySelectorAll('.expected-date-input');
   const selectAllCb = document.getElementById('select-all-cb');
   const bulkBar = document.getElementById('bulk-action-bar');
   const selectedCountEl = document.getElementById('selected-count');
   const markSelectedBtn = document.getElementById('mark-selected');
   const clearSelectionBtn = document.getElementById('clear-selection');
 
+  // Today (as of the current snapshot date) — used for live "days remaining" calc
+  const TODAY_ISO = "{{ to_date_iso or '' }}";
+
+  function daysBetween(dateIsoA, dateIsoB) {
+    // Returns (dateIsoA - dateIsoB) in whole days
+    if (!dateIsoA || !dateIsoB) return null;
+    const a = new Date(dateIsoA + 'T00:00:00Z');
+    const b = new Date(dateIsoB + 'T00:00:00Z');
+    return Math.round((a - b) / (1000 * 60 * 60 * 24));
+  }
+
+  function daysCellText(days) {
+    if (days === null) return '\u2014';
+    if (days > 0) return `${days} day${days !== 1 ? 's' : ''} remaining`;
+    if (days === 0) return 'Due today';
+    return `Delayed by ${-days} day${days !== -1 ? 's' : ''}`;
+  }
+
+  function updateDaysCell(dateInput) {
+    const tehsil = dateInput.dataset.tehsil;
+    const village = dateInput.dataset.village;
+    const row = dateInput.closest('tr');
+    if (!row) return;
+    const daysCell = row.querySelector('.days-cell');
+    if (!daysCell) return;
+    const iso = dateInput.value;
+    let days = null;
+    if (iso && TODAY_ISO) days = daysBetween(iso, TODAY_ISO);
+    daysCell.textContent = daysCellText(days);
+    daysCell.classList.remove('days-delayed', 'days-soon');
+    if (days !== null) {
+      if (days < 0) daysCell.classList.add('days-delayed');
+      else if (days <= 2) daysCell.classList.add('days-soon');
+    }
+  }
+
+  function dateInputIsDirty(inp) {
+    return (inp.value || '') !== (inp.dataset.original || '');
+  }
+
   function updateBulkBar() {
     if (!bulkBar) return;
-    const checked = document.querySelectorAll('.mark-complete-cb:checked');
-    const count = checked.length;
-    if (count === 0) {
+    const checkedCount = document.querySelectorAll('.mark-complete-cb:checked').length;
+    let dirtyDateCount = 0;
+    dateInputs.forEach(inp => { if (dateInputIsDirty(inp)) dirtyDateCount++; });
+    const total = checkedCount + dirtyDateCount;
+    if (total === 0) {
       bulkBar.style.display = 'none';
     } else {
       bulkBar.style.display = 'flex';
-      selectedCountEl.textContent = `${count} village${count !== 1 ? 's' : ''} selected`;
+      const parts = [];
+      if (checkedCount > 0) parts.push(`${checkedCount} to mark complete`);
+      if (dirtyDateCount > 0) parts.push(`${dirtyDateCount} date change${dirtyDateCount !== 1 ? 's' : ''}`);
+      selectedCountEl.textContent = parts.join(' · ');
     }
-    // Sync select-all state — checked if all are, unchecked if none, indeterminate if partial
     if (selectAllCb) {
-      const total = markCheckboxes.length;
-      if (count === 0) {
+      const totalCbs = markCheckboxes.length;
+      if (checkedCount === 0) {
         selectAllCb.checked = false;
         selectAllCb.indeterminate = false;
-      } else if (count === total) {
+      } else if (checkedCount === totalCbs) {
         selectAllCb.checked = true;
         selectAllCb.indeterminate = false;
       } else {
@@ -1011,8 +1113,15 @@
     }
   }
 
-  markCheckboxes.forEach(cb => {
-    cb.addEventListener('change', updateBulkBar);
+  markCheckboxes.forEach(cb => cb.addEventListener('change', updateBulkBar));
+  dateInputs.forEach(inp => {
+    inp.addEventListener('change', () => {
+      if (dateInputIsDirty(inp)) inp.classList.add('dirty');
+      else inp.classList.remove('dirty');
+      updateDaysCell(inp);
+      updateBulkBar();
+    });
+    inp.addEventListener('input', () => updateDaysCell(inp));
   });
 
   if (selectAllCb) {
@@ -1026,42 +1135,79 @@
   if (clearSelectionBtn) {
     clearSelectionBtn.addEventListener('click', () => {
       markCheckboxes.forEach(cb => { cb.checked = false; });
+      dateInputs.forEach(inp => {
+        inp.value = inp.dataset.original || '';
+        inp.classList.remove('dirty');
+        updateDaysCell(inp);
+      });
       updateBulkBar();
     });
   }
 
+  async function saveMarkComplete(password, villages) {
+    const resp = await fetch('/api/mark-complete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password, action: 'mark', villages}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  }
+
+  async function saveDateChanges(password, changes) {
+    const resp = await fetch('/api/set-dates', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password, changes}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  }
+
   if (markSelectedBtn) {
     markSelectedBtn.addEventListener('click', async () => {
+      // Collect completion marks
       const checked = Array.from(document.querySelectorAll('.mark-complete-cb:checked'));
-      if (!checked.length) return;
-      const villages = checked.map(cb => ({
+      const villagesToMark = checked.map(cb => ({
         tehsil: cb.dataset.tehsil,
         village: cb.dataset.village,
       }));
-      const noun = villages.length === 1 ? 'village' : 'villages';
-      const password = window.prompt(
-        `Password to mark ${villages.length} ${noun} as completed:`
-      );
+      // Collect date changes
+      const dateChanges = [];
+      dateInputs.forEach(inp => {
+        if (dateInputIsDirty(inp)) {
+          dateChanges.push({
+            tehsil: inp.dataset.tehsil,
+            village: inp.dataset.village,
+            date: inp.value || null,
+          });
+        }
+      });
+      if (!villagesToMark.length && !dateChanges.length) return;
+
+      // Ask for the password once
+      const parts = [];
+      if (villagesToMark.length) parts.push(`mark ${villagesToMark.length} village${villagesToMark.length !== 1 ? 's' : ''} complete`);
+      if (dateChanges.length) parts.push(`save ${dateChanges.length} date change${dateChanges.length !== 1 ? 's' : ''}`);
+      const password = window.prompt(`Password to ${parts.join(' and ')}:`);
       if (!password) return;
+
       markSelectedBtn.disabled = true;
       const originalLabel = markSelectedBtn.textContent;
       markSelectedBtn.textContent = 'Saving to GitHub…';
       try {
-        const resp = await fetch('/api/mark-complete', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({password, action: 'mark', villages}),
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-          alert('Could not mark complete: ' + (data.error || `HTTP ${resp.status}`));
-          markSelectedBtn.disabled = false;
-          markSelectedBtn.textContent = originalLabel;
-          return;
+        // Save dates first (in case marking complete then makes them disappear).
+        if (dateChanges.length > 0) {
+          await saveDateChanges(password, dateChanges);
+        }
+        if (villagesToMark.length > 0) {
+          await saveMarkComplete(password, villagesToMark);
         }
         window.location.reload();
       } catch (err) {
-        alert('Network error: ' + err.message);
+        alert('Could not save changes: ' + err.message);
         markSelectedBtn.disabled = false;
         markSelectedBtn.textContent = originalLabel;
       }
