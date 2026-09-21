@@ -413,6 +413,68 @@
   }
   .days-cell.days-delayed { color: #B33A3A; font-weight: 500; }
   .days-cell.days-soon { color: #B8862A; font-weight: 500; }
+
+  /* Developer mode: hide edit controls unless body has .dev-mode */
+  body:not(.dev-mode) .dev-only { display: none !important; }
+  body.dev-mode .dev-hidden { display: none !important; }
+
+  /* Read-only date input styling: looks like plain text, no picker calendar */
+  body:not(.dev-mode) .expected-date-input {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    pointer-events: none;
+    cursor: default;
+    padding-left: 0;
+  }
+  body:not(.dev-mode) .expected-date-input::-webkit-calendar-picker-indicator {
+    display: none;
+  }
+
+  /* Bottom action bar (Download, Developer options, Lock) */
+  .pending-footer-actions {
+    margin-top: 22px;
+    padding: 14px 16px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .pending-footer-actions .footer-note {
+    color: var(--mute);
+    font-size: 12.5px;
+    margin-right: auto;
+    letter-spacing: 0.02em;
+  }
+  .footer-btn {
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    padding: 8px 16px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    display: inline-block;
+    transition: background 140ms;
+  }
+  .footer-btn:hover { background: var(--tint-good, #E8EEDE); }
+  .footer-btn.primary {
+    background: #1F3F2E;
+    color: #FDFBF5;
+    border-color: #1F3F2E;
+  }
+  .footer-btn.primary:hover { background: #2C5040; }
+  .footer-btn.warning {
+    background: #E8DCC8;
+    color: #7A3820;
+    border-color: #C9AA85;
+  }
 </style>
 </head>
 <body>
@@ -843,11 +905,9 @@
     </div>
     {% elif mode == 'pending' %}
     <div class="pending-meta">
-      Showing only villages that are not yet marked complete. Set a target
-      <strong>Date of Completion</strong> per village and tick <strong>Completed?</strong> on any rows
-      to mark complete. Then click <strong>Save all changes</strong> in the action bar
-      (one password prompt handles both date changes and completion marks).
-      Use the <strong>Manage completed villages</strong> panel at the bottom to restore any that were marked in error.
+      Showing only villages that are not yet marked complete. This is a read-only view — download
+      the Excel below to share, or unlock <strong>Developer options</strong> to set target dates
+      and mark villages as complete.
     </div>
     <div class="table-wrap">
       <table>
@@ -864,7 +924,7 @@
             {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
             <th style="width:150px">Date of Completion</th>
             <th style="width:130px">Days to Completion</th>
-            <th style="width:110px">
+            <th style="width:110px" class="dev-only">
               <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600">
                 <input type="checkbox" id="select-all-cb" title="Select all pending villages" style="width:16px;height:16px;cursor:pointer">
                 Completed?
@@ -905,7 +965,7 @@
                 &mdash;
               {% endif %}
             </td>
-            <td class="center">
+            <td class="center dev-only">
               <input type="checkbox" class="mark-complete-cb"
                      data-tehsil="{{ row.tehsil }}" data-village="{{ row.village }}"
                      aria-label="Mark {{ row.village }} complete">
@@ -926,28 +986,28 @@
             {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
             <td></td>
             <td></td>
-            <td></td>
+            <td class="dev-only"></td>
           </tr>
         </tfoot>
       </table>
     </div>
 
-    <!-- Bulk action bar — appears when any row is ticked or a date is changed -->
-    <div class="bulk-action-bar" id="bulk-action-bar" style="display:none">
+    <!-- Bulk action bar — appears when any row is ticked or a date is changed (dev only) -->
+    <div class="bulk-action-bar dev-only" id="bulk-action-bar" style="display:none">
       <span class="selected-count" id="selected-count">0 changes pending</span>
       <button type="button" id="mark-selected" class="dl-btn">Save all changes</button>
       <button type="button" id="clear-selection" class="dl-btn secondary">Discard</button>
     </div>
 
-    <!-- Manage completed villages: password-gated dropdown to restore a village -->
-    <div class="manage-completed">
+    <!-- Manage completed villages: password-gated dropdown to restore a village (dev only) -->
+    <div class="manage-completed dev-only">
       <button type="button" id="manage-toggle" class="manage-toggle-btn">
         Manage completed villages ({{ completed_count }})
       </button>
       <div id="manage-panel" class="manage-panel" style="display:none">
         {% if completed_display %}
         <div class="manage-note">
-          Restore a village so it re-appears in the Pending list. You'll need the password.
+          Restore a village so it re-appears in the Pending list.
         </div>
         <div class="manage-row">
           <label>Village to restore:
@@ -963,6 +1023,14 @@
         <div class="manage-note">No villages have been marked complete yet.</div>
         {% endif %}
       </div>
+    </div>
+
+    <!-- Bottom action bar: Download always visible; Developer / Lock swap by mode -->
+    <div class="pending-footer-actions">
+      <span class="footer-note">Read-only view. Enter Developer options to enable editing.</span>
+      <a href="/download.xlsx?view=village&amp;pending=1" class="footer-btn">Download Excel</a>
+      <button type="button" id="dev-unlock-btn" class="footer-btn primary dev-hidden">Developer options</button>
+      <button type="button" id="dev-lock-btn" class="footer-btn warning dev-only">Lock developer options</button>
     </div>
     {% endif %}
   </section>
@@ -1029,12 +1097,79 @@
     }
   }
 
-  // === Mark-complete + set-dates: unified multi-select mode ===
-  // Users can:
-  //  1. Tick "Completed?" checkboxes on any number of rows
-  //  2. Change "Date of Completion" on any number of rows (yellow highlight = unsaved)
-  // Then click "Save all changes" once — a single password prompt handles both
-  // sets of changes, each committed to its own JSON file on GitHub.
+  // === Developer mode: unlock UI edits with a session key ===
+  // On unlock, server returns the completion password (api_key), which we
+  // store in sessionStorage. All subsequent API calls include it silently.
+  // Closing the tab clears sessionStorage → locked again.
+  const DEV_KEY_NAME = 'pending-view-api-key';
+  const devUnlockBtn = document.getElementById('dev-unlock-btn');
+  const devLockBtn = document.getElementById('dev-lock-btn');
+
+  function isDevMode() {
+    try {
+      return !!sessionStorage.getItem(DEV_KEY_NAME);
+    } catch (e) { return false; }
+  }
+  function getApiKey() {
+    try { return sessionStorage.getItem(DEV_KEY_NAME) || ''; }
+    catch (e) { return ''; }
+  }
+  function applyDevMode() {
+    if (isDevMode()) document.body.classList.add('dev-mode');
+    else document.body.classList.remove('dev-mode');
+    // Update banner note
+    const note = document.querySelector('.pending-footer-actions .footer-note');
+    if (note) {
+      note.textContent = isDevMode()
+        ? 'Developer options unlocked — editing enabled for this browser tab.'
+        : 'Read-only view. Enter Developer options to enable editing.';
+    }
+  }
+  applyDevMode();
+
+  if (devUnlockBtn) {
+    devUnlockBtn.addEventListener('click', async () => {
+      const pw = window.prompt('Developer password:');
+      if (!pw) return;
+      try {
+        const resp = await fetch('/api/dev-unlock', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({password: pw}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          alert(data.error || 'Wrong password');
+          return;
+        }
+        try {
+          sessionStorage.setItem(DEV_KEY_NAME, data.api_key);
+        } catch (e) {
+          alert('Could not enable developer mode (sessionStorage blocked).');
+          return;
+        }
+        applyDevMode();
+      } catch (err) {
+        alert('Network error: ' + err.message);
+      }
+    });
+  }
+
+  if (devLockBtn) {
+    devLockBtn.addEventListener('click', () => {
+      try { sessionStorage.removeItem(DEV_KEY_NAME); } catch (e) {}
+      // Also clear any pending selection so a locked view doesn't have hidden state
+      document.querySelectorAll('.mark-complete-cb:checked').forEach(cb => cb.checked = false);
+      document.querySelectorAll('.expected-date-input.dirty').forEach(inp => {
+        inp.value = inp.dataset.original || '';
+        inp.classList.remove('dirty');
+      });
+      applyDevMode();
+      window.location.reload();
+    });
+  }
+
+  // === Save flow (only functional when dev mode is unlocked) ===
   const markCheckboxes = document.querySelectorAll('.mark-complete-cb');
   const dateInputs = document.querySelectorAll('.expected-date-input');
   const selectAllCb = document.getElementById('select-all-cb');
@@ -1043,27 +1178,21 @@
   const markSelectedBtn = document.getElementById('mark-selected');
   const clearSelectionBtn = document.getElementById('clear-selection');
 
-  // Today (as of the current snapshot date) — used for live "days remaining" calc
   const TODAY_ISO = "{{ to_date_iso or '' }}";
 
   function daysBetween(dateIsoA, dateIsoB) {
-    // Returns (dateIsoA - dateIsoB) in whole days
     if (!dateIsoA || !dateIsoB) return null;
     const a = new Date(dateIsoA + 'T00:00:00Z');
     const b = new Date(dateIsoB + 'T00:00:00Z');
     return Math.round((a - b) / (1000 * 60 * 60 * 24));
   }
-
   function daysCellText(days) {
     if (days === null) return '\u2014';
     if (days > 0) return `${days} day${days !== 1 ? 's' : ''} remaining`;
     if (days === 0) return 'Due today';
     return `Delayed by ${-days} day${days !== -1 ? 's' : ''}`;
   }
-
   function updateDaysCell(dateInput) {
-    const tehsil = dateInput.dataset.tehsil;
-    const village = dateInput.dataset.village;
     const row = dateInput.closest('tr');
     if (!row) return;
     const daysCell = row.querySelector('.days-cell');
@@ -1078,11 +1207,9 @@
       else if (days <= 2) daysCell.classList.add('days-soon');
     }
   }
-
   function dateInputIsDirty(inp) {
     return (inp.value || '') !== (inp.dataset.original || '');
   }
-
   function updateBulkBar() {
     if (!bulkBar) return;
     const checkedCount = document.querySelectorAll('.mark-complete-cb:checked').length;
@@ -1096,20 +1223,13 @@
       const parts = [];
       if (checkedCount > 0) parts.push(`${checkedCount} to mark complete`);
       if (dirtyDateCount > 0) parts.push(`${dirtyDateCount} date change${dirtyDateCount !== 1 ? 's' : ''}`);
-      selectedCountEl.textContent = parts.join(' · ');
+      selectedCountEl.textContent = parts.join(' \u00b7 ');
     }
     if (selectAllCb) {
       const totalCbs = markCheckboxes.length;
-      if (checkedCount === 0) {
-        selectAllCb.checked = false;
-        selectAllCb.indeterminate = false;
-      } else if (checkedCount === totalCbs) {
-        selectAllCb.checked = true;
-        selectAllCb.indeterminate = false;
-      } else {
-        selectAllCb.checked = false;
-        selectAllCb.indeterminate = true;
-      }
+      if (checkedCount === 0) { selectAllCb.checked = false; selectAllCb.indeterminate = false; }
+      else if (checkedCount === totalCbs) { selectAllCb.checked = true; selectAllCb.indeterminate = false; }
+      else { selectAllCb.checked = false; selectAllCb.indeterminate = true; }
     }
   }
 
@@ -1131,7 +1251,6 @@
       updateBulkBar();
     });
   }
-
   if (clearSelectionBtn) {
     clearSelectionBtn.addEventListener('click', () => {
       markCheckboxes.forEach(cb => { cb.checked = false; });
@@ -1154,7 +1273,6 @@
     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
     return data;
   }
-
   async function saveDateChanges(password, changes) {
     const resp = await fetch('/api/set-dates', {
       method: 'POST',
@@ -1168,13 +1286,16 @@
 
   if (markSelectedBtn) {
     markSelectedBtn.addEventListener('click', async () => {
-      // Collect completion marks
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        alert('Developer mode is not unlocked.');
+        return;
+      }
       const checked = Array.from(document.querySelectorAll('.mark-complete-cb:checked'));
       const villagesToMark = checked.map(cb => ({
         tehsil: cb.dataset.tehsil,
         village: cb.dataset.village,
       }));
-      // Collect date changes
       const dateChanges = [];
       dateInputs.forEach(inp => {
         if (dateInputIsDirty(inp)) {
@@ -1187,24 +1308,12 @@
       });
       if (!villagesToMark.length && !dateChanges.length) return;
 
-      // Ask for the password once
-      const parts = [];
-      if (villagesToMark.length) parts.push(`mark ${villagesToMark.length} village${villagesToMark.length !== 1 ? 's' : ''} complete`);
-      if (dateChanges.length) parts.push(`save ${dateChanges.length} date change${dateChanges.length !== 1 ? 's' : ''}`);
-      const password = window.prompt(`Password to ${parts.join(' and ')}:`);
-      if (!password) return;
-
       markSelectedBtn.disabled = true;
       const originalLabel = markSelectedBtn.textContent;
-      markSelectedBtn.textContent = 'Saving to GitHub…';
+      markSelectedBtn.textContent = 'Saving to GitHub\u2026';
       try {
-        // Save dates first (in case marking complete then makes them disappear).
-        if (dateChanges.length > 0) {
-          await saveDateChanges(password, dateChanges);
-        }
-        if (villagesToMark.length > 0) {
-          await saveMarkComplete(password, villagesToMark);
-        }
+        if (dateChanges.length > 0) await saveDateChanges(apiKey, dateChanges);
+        if (villagesToMark.length > 0) await saveMarkComplete(apiKey, villagesToMark);
         window.location.reload();
       } catch (err) {
         alert('Could not save changes: ' + err.message);
@@ -1214,7 +1323,6 @@
     });
   }
 
-  // === Manage completed villages panel ===
   const manageToggle = document.getElementById('manage-toggle');
   const managePanel = document.getElementById('manage-panel');
   if (manageToggle && managePanel) {
@@ -1227,17 +1335,20 @@
   const unmarkSelect = document.getElementById('unmark-village');
   if (unmarkBtn && unmarkSelect) {
     unmarkBtn.addEventListener('click', async () => {
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        alert('Developer mode is not unlocked.');
+        return;
+      }
       const val = unmarkSelect.value;
       if (!val) return;
       const [tehsil, village] = val.split('|');
-      const password = window.prompt(`Password to restore "${village}" (${tehsil}) as pending:`);
-      if (!password) return;
       unmarkBtn.disabled = true;
       try {
         const resp = await fetch('/api/mark-complete', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({password, action: 'unmark', tehsil, village}),
+          body: JSON.stringify({password: apiKey, action: 'unmark', tehsil, village}),
         });
         const data = await resp.json();
         if (!resp.ok) {
