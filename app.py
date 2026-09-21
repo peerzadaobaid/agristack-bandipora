@@ -1596,6 +1596,10 @@ def index():
     completed_list = []
     completed_display = []  # for template dropdown
     expected_dates_map = {}
+    # Snapshot of per-tehsil village counts BEFORE the pending filter — used
+    # to render "Total Villages" alongside "Pending Villages".
+    total_villages_per_tehsil = {}
+    grand_total_villages = 0
 
     if mode == "pending" and completion_available:
         try:
@@ -1608,6 +1612,17 @@ def index():
         except Exception as e:
             print(f"[pending] Failed to load expected dates: {e}", file=sys.stderr)
             expected_dates_map = {}
+
+        # Capture pre-filter counts first (uppercased tehsil for consistent lookup)
+        tehsil_upper = current_df["tehsil"].astype(str).str.upper()
+        total_villages_per_tehsil = (
+            current_df.assign(_t=tehsil_upper)
+                      .drop_duplicates(subset=["_t", "village"])
+                      .groupby("_t")
+                      .size()
+                      .to_dict()
+        )
+        grand_total_villages = int(sum(total_villages_per_tehsil.values()))
 
         # Filter both current and prior snapshot DataFrames to exclude completed
         # villages. Everything downstream (tehsil rows, village rows, Additions,
@@ -1628,7 +1643,8 @@ def index():
     views = build_views(current_df, from_df, tehsils_filter)
 
     # In pending mode, decorate each village row with expected_date and
-    # days_remaining (relative to the current snapshot date).
+    # days_remaining (relative to the current snapshot date), and each tehsil
+    # row with total_villages (pre-filter count).
     if mode == "pending" and completion_available:
         for row in views.get("village_rows", []):
             key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
@@ -1642,6 +1658,10 @@ def index():
                     row["days_remaining"] = None
             else:
                 row["days_remaining"] = None
+        for row in views.get("tehsil_rows", []):
+            row["total_villages"] = total_villages_per_tehsil.get(
+                str(row["tehsil"]).upper(), row.get("villages", 0)
+            )
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
@@ -1668,6 +1688,7 @@ def index():
         completion_available=completion_available,
         completed_display=completed_display,
         completed_count=len(completed_list),
+        grand_total_villages=grand_total_villages,
         **views,
     )
 
