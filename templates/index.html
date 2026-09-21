@@ -475,6 +475,53 @@
     color: #7A3820;
     border-color: #C9AA85;
   }
+
+  /* Fully-done tehsil rows: merged green cell across the numeric columns */
+  .tehsil-done-cell {
+    background: #4A8C5F;
+    color: #FDFBF5;
+    text-align: center;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    font-size: 12.5px;
+  }
+  .tehsil-done-row td:nth-child(-n+4) {
+    background: #F0F5EA;
+  }
+
+  /* Bucket status: label (normal mode) + dropdown (dev mode) */
+  .bucket-status-text {
+    font-size: 13px;
+    color: var(--text);
+  }
+  .bucket-status-select {
+    font-family: inherit;
+    font-size: 12.5px;
+    padding: 4px 8px;
+    border: 1px solid var(--rule);
+    background: white;
+    color: var(--text);
+    border-radius: 2px;
+    min-width: 250px;
+    box-sizing: border-box;
+  }
+  .bucket-status-select.dirty {
+    background: #FFF7D6;
+    border-color: #C9B575;
+  }
+  /* Status color chips inside labels */
+  .status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .status-bucketed { background: #DCE7CE; color: #2C5040; }
+  .status-submitted { background: #EDE1C4; color: #7A5A20; }
+  .status-completed { background: #E8DAD2; color: #7A3820; }
+  .status-none { color: var(--mute); font-style: italic; }
 </style>
 </head>
 <body>
@@ -569,6 +616,10 @@
     {% if checker_rows %}<button class="tab" data-target="checker">Checker Wise</button>{% endif %}
     {% endif %}
     <button class="tab" data-target="village">Village Wise</button>
+    {% if mode == 'pending' %}
+    <button class="tab" data-target="bucket-status">Bucket Status</button>
+    <button class="tab" data-target="bucket-summary">Bucket Summary</button>
+    {% endif %}
   </div>
 
   {% macro additions_cell(val) %}
@@ -647,15 +698,19 @@
         </thead>
         <tbody>
           {% for row in tehsil_rows %}
-          <tr>
+          <tr {% if row.is_done %}class="tehsil-done-row"{% endif %}>
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.tehsil }}</td>
             <td class="num">{{ "{:,}".format(row.total_villages) }}</td>
             <td class="num">{{ "{:,}".format(row.villages) }}</td>
+            {% if row.is_done %}
+            <td colspan="4" class="tehsil-done-cell">AgriStack Data Punching Complete</td>
+            {% else %}
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
             <td class="pct">{{ "%.2f"|format(row.pct) }}%</td>
             <td class="pct">{{ "%.2f"|format(row.pct_approved) }}%</td>
+            {% endif %}
           </tr>
           {% endfor %}
         </tbody>
@@ -994,49 +1049,156 @@
         </tfoot>
       </table>
     </div>
-
-    <!-- Bulk action bar — appears when any row is ticked or a date is changed (dev only) -->
-    <div class="bulk-action-bar dev-only" id="bulk-action-bar" style="display:none">
-      <span class="selected-count" id="selected-count">0 changes pending</span>
-      <button type="button" id="mark-selected" class="dl-btn">Save all changes</button>
-      <button type="button" id="clear-selection" class="dl-btn secondary">Discard</button>
-    </div>
-
-    <!-- Manage completed villages: password-gated dropdown to restore a village (dev only) -->
-    <div class="manage-completed dev-only">
-      <button type="button" id="manage-toggle" class="manage-toggle-btn">
-        Manage completed villages ({{ completed_count }})
-      </button>
-      <div id="manage-panel" class="manage-panel" style="display:none">
-        {% if completed_display %}
-        <div class="manage-note">
-          Restore a village so it re-appears in the Pending list.
-        </div>
-        <div class="manage-row">
-          <label>Village to restore:
-            <select id="unmark-village">
-              {% for cv in completed_display %}
-              <option value="{{ cv.tehsil }}|{{ cv.village }}">{{ cv.tehsil }} &nbsp;/&nbsp; {{ cv.village }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <button type="button" id="do-unmark" class="dl-btn">Restore as pending</button>
-        </div>
-        {% else %}
-        <div class="manage-note">No villages have been marked complete yet.</div>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Bottom action bar: Download always visible; Developer / Lock swap by mode -->
-    <div class="pending-footer-actions">
-      <span class="footer-note">Read-only view. Enter Developer options to enable editing.</span>
-      <a href="/download.xlsx?view=village&amp;pending=1" class="footer-btn">Download Excel</a>
-      <button type="button" id="dev-unlock-btn" class="footer-btn primary dev-hidden">Developer options</button>
-      <button type="button" id="dev-lock-btn" class="footer-btn warning dev-only">Lock developer options</button>
-    </div>
     {% endif %}
   </section>
+
+  {% if mode == 'pending' %}
+  <!-- === BUCKET STATUS (Village-level tracking of post-completion state) === -->
+  <section id="bucket-status" class="panel">
+    <div class="pending-meta">
+      Villages that have been marked complete (or given a bucket status) appear here.
+      Track their post-completion progress: <strong>Completed but not submitted/bucketed</strong> →
+      <strong>Submitted for Bucketing</strong> → <strong>Bucketed</strong>.
+      In Developer mode, each row's status is a dropdown you can change.
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:55px">S.NO</th>
+            <th style="width:110px">Tehsil</th>
+            <th>Village</th>
+            <th style="width:150px">Total Survey Nos</th>
+            <th style="width:340px">Current Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in bucket_status_rows %}
+          <tr>
+            <td class="center">{{ loop.index }}</td>
+            <td>{{ row.tehsil }}</td>
+            <td>{{ row.village }}</td>
+            <td class="num">{{ "{:,}".format(row.total) }}</td>
+            <td>
+              <span class="bucket-status-text dev-hidden">
+                {% if row.status_code %}
+                <span class="status-pill status-{{ row.status_code }}">{{ row.status_label }}</span>
+                {% else %}
+                <span class="status-none">— not set —</span>
+                {% endif %}
+              </span>
+              <select class="bucket-status-select dev-only"
+                      data-tehsil="{{ row.tehsil }}"
+                      data-village="{{ row.village }}"
+                      data-original="{{ row.status_code }}">
+                <option value="" {% if not row.status_code %}selected{% endif %}>— not set —</option>
+                {% for code, label in bucket_status_labels.items() %}
+                <option value="{{ code }}" {% if row.status_code == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not bucket_status_rows %}
+          <tr>
+            <td colspan="5" style="text-align:center;padding:32px;color:var(--mute);font-style:italic">
+              No villages have been marked complete yet.
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- === BUCKET SUMMARY (Tehsil-level counts by status) === -->
+  <section id="bucket-summary" class="panel">
+    <div class="pending-meta">
+      Per-tehsil breakdown of bucket status. Each row shows how many villages are still pending,
+      completed but not yet submitted, submitted for bucketing, or fully bucketed.
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:55px">S.NO</th>
+            <th>Tehsil</th>
+            <th style="width:110px">Total Villages</th>
+            <th style="width:100px">Pending</th>
+            <th style="width:180px">Completed (not submitted)</th>
+            <th style="width:170px">Submitted for Bucketing</th>
+            <th style="width:110px">Bucketed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in bucket_summary_rows %}
+          <tr>
+            <td class="center">{{ loop.index }}</td>
+            <td>{{ row.tehsil }}</td>
+            <td class="num">{{ "{:,}".format(row.total_villages) }}</td>
+            <td class="num">{{ "{:,}".format(row.pending) }}</td>
+            <td class="num">{{ "{:,}".format(row.completed_only) }}</td>
+            <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+            <td class="num">{{ "{:,}".format(row.bucketed) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td></td>
+            <td>TOTAL</td>
+            <td class="num">{{ "{:,}".format(bucket_grand.total) }}</td>
+            <td class="num">{{ "{:,}".format(bucket_grand.pending) }}</td>
+            <td class="num">{{ "{:,}".format(bucket_grand.completed_only) }}</td>
+            <td class="num">{{ "{:,}".format(bucket_grand.submitted) }}</td>
+            <td class="num">{{ "{:,}".format(bucket_grand.bucketed) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </section>
+
+  <!-- Bulk action bar — appears when any change is pending (dev only, sticky) -->
+  <div class="bulk-action-bar dev-only" id="bulk-action-bar" style="display:none">
+    <span class="selected-count" id="selected-count">0 changes pending</span>
+    <button type="button" id="mark-selected" class="dl-btn">Save all changes</button>
+    <button type="button" id="clear-selection" class="dl-btn secondary">Discard</button>
+  </div>
+
+  <!-- Manage completed villages: password-gated dropdown to restore a village (dev only) -->
+  <div class="manage-completed dev-only">
+    <button type="button" id="manage-toggle" class="manage-toggle-btn">
+      Manage completed villages ({{ completed_count }})
+    </button>
+    <div id="manage-panel" class="manage-panel" style="display:none">
+      {% if completed_display %}
+      <div class="manage-note">
+        Restore a village so it re-appears in the Pending list.
+      </div>
+      <div class="manage-row">
+        <label>Village to restore:
+          <select id="unmark-village">
+            {% for cv in completed_display %}
+            <option value="{{ cv.tehsil }}|{{ cv.village }}">{{ cv.tehsil }} &nbsp;/&nbsp; {{ cv.village }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="button" id="do-unmark" class="dl-btn">Restore as pending</button>
+      </div>
+      {% else %}
+      <div class="manage-note">No villages have been marked complete yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Bottom action bar: Download always visible; Developer / Lock swap by mode -->
+  <div class="pending-footer-actions">
+    <span class="footer-note">Read-only view. Enter Developer options to enable editing.</span>
+    <a href="/download.xlsx?view=all&amp;pending=1" class="footer-btn">Download Excel</a>
+    <button type="button" id="dev-unlock-btn" class="footer-btn primary dev-hidden">Developer options</button>
+    <button type="button" id="dev-lock-btn" class="footer-btn warning dev-only">Lock developer options</button>
+  </div>
+  {% endif %}
 
   <div class="download-bar">
     <span class="lbl">Download</span>
@@ -1175,6 +1337,7 @@
   // === Save flow (only functional when dev mode is unlocked) ===
   const markCheckboxes = document.querySelectorAll('.mark-complete-cb');
   const dateInputs = document.querySelectorAll('.expected-date-input');
+  const bucketSelects = document.querySelectorAll('.bucket-status-select');
   const selectAllCb = document.getElementById('select-all-cb');
   const bulkBar = document.getElementById('bulk-action-bar');
   const selectedCountEl = document.getElementById('selected-count');
@@ -1213,12 +1376,17 @@
   function dateInputIsDirty(inp) {
     return (inp.value || '') !== (inp.dataset.original || '');
   }
+  function bucketSelectIsDirty(sel) {
+    return (sel.value || '') !== (sel.dataset.original || '');
+  }
   function updateBulkBar() {
     if (!bulkBar) return;
     const checkedCount = document.querySelectorAll('.mark-complete-cb:checked').length;
     let dirtyDateCount = 0;
     dateInputs.forEach(inp => { if (dateInputIsDirty(inp)) dirtyDateCount++; });
-    const total = checkedCount + dirtyDateCount;
+    let dirtyBucketCount = 0;
+    bucketSelects.forEach(sel => { if (bucketSelectIsDirty(sel)) dirtyBucketCount++; });
+    const total = checkedCount + dirtyDateCount + dirtyBucketCount;
     if (total === 0) {
       bulkBar.style.display = 'none';
     } else {
@@ -1226,6 +1394,7 @@
       const parts = [];
       if (checkedCount > 0) parts.push(`${checkedCount} to mark complete`);
       if (dirtyDateCount > 0) parts.push(`${dirtyDateCount} date change${dirtyDateCount !== 1 ? 's' : ''}`);
+      if (dirtyBucketCount > 0) parts.push(`${dirtyBucketCount} bucket status change${dirtyBucketCount !== 1 ? 's' : ''}`);
       selectedCountEl.textContent = parts.join(' \u00b7 ');
     }
     if (selectAllCb) {
@@ -1246,6 +1415,13 @@
     });
     inp.addEventListener('input', () => updateDaysCell(inp));
   });
+  bucketSelects.forEach(sel => {
+    sel.addEventListener('change', () => {
+      if (bucketSelectIsDirty(sel)) sel.classList.add('dirty');
+      else sel.classList.remove('dirty');
+      updateBulkBar();
+    });
+  });
 
   if (selectAllCb) {
     selectAllCb.addEventListener('change', () => {
@@ -1261,6 +1437,10 @@
         inp.value = inp.dataset.original || '';
         inp.classList.remove('dirty');
         updateDaysCell(inp);
+      });
+      bucketSelects.forEach(sel => {
+        sel.value = sel.dataset.original || '';
+        sel.classList.remove('dirty');
       });
       updateBulkBar();
     });
@@ -1278,6 +1458,16 @@
   }
   async function saveDateChanges(password, changes) {
     const resp = await fetch('/api/set-dates', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password, changes}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  }
+  async function saveBucketStatus(password, changes) {
+    const resp = await fetch('/api/set-bucket-status', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({password, changes}),
@@ -1309,13 +1499,26 @@
           });
         }
       });
-      if (!villagesToMark.length && !dateChanges.length) return;
+      const bucketChanges = [];
+      bucketSelects.forEach(sel => {
+        if (bucketSelectIsDirty(sel)) {
+          bucketChanges.push({
+            tehsil: sel.dataset.tehsil,
+            village: sel.dataset.village,
+            status: sel.value || null,
+          });
+        }
+      });
+      if (!villagesToMark.length && !dateChanges.length && !bucketChanges.length) return;
 
       markSelectedBtn.disabled = true;
       const originalLabel = markSelectedBtn.textContent;
       markSelectedBtn.textContent = 'Saving to GitHub\u2026';
       try {
+        // Dates first, then bucket status (both apply to any village), then completion
+        // marks (which change the pending/completed set).
         if (dateChanges.length > 0) await saveDateChanges(apiKey, dateChanges);
+        if (bucketChanges.length > 0) await saveBucketStatus(apiKey, bucketChanges);
         if (villagesToMark.length > 0) await saveMarkComplete(apiKey, villagesToMark);
         window.location.reload();
       } catch (err) {
