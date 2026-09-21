@@ -637,7 +637,8 @@
           <tr>
             <th style="width:55px">S.NO</th>
             <th>Tehsil</th>
-            <th style="width:100px">Villages</th>
+            <th style="width:110px">Total Villages</th>
+            <th style="width:120px">Pending Villages</th>
             <th style="width:150px">Total Survey Nos</th>
             <th style="width:120px">Submitted</th>
             <th style="width:130px">% Completion</th>
@@ -649,6 +650,7 @@
           <tr>
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.tehsil }}</td>
+            <td class="num">{{ "{:,}".format(row.total_villages) }}</td>
             <td class="num">{{ "{:,}".format(row.villages) }}</td>
             <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
@@ -661,6 +663,7 @@
           <tr>
             <td></td>
             <td>TOTAL (Pending)</td>
+            <td class="num">{{ "{:,}".format(grand_total_villages) }}</td>
             <td class="num">{{ "{:,}".format(grand.villages) }}</td>
             <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
             <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
