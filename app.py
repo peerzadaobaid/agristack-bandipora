@@ -48,6 +48,15 @@ COMPLETION_PASSWORD = os.environ.get("COMPLETION_PASSWORD", "Peerzada@1674")
 DEVELOPER_PASSWORD = "1234@"
 COMPLETED_FILE_PATH = "completed_villages.json"
 EXPECTED_DATES_FILE_PATH = "expected_dates.json"
+BUCKET_STATUS_FILE_PATH = "bucket_status.json"
+# Bucket status stages. Dict on GitHub is {"TEHSIL|Village": "code", ...}
+# where code is one of these keys. Labels are what the user sees.
+BUCKET_STATUS_LABELS = {
+    "bucketed": "Bucketed",
+    "submitted": "Submitted for Bucketing",
+    "completed": "Completed but not submitted/bucketed",
+}
+BUCKET_STATUS_CODES = set(BUCKET_STATUS_LABELS.keys())
 
 # In-memory cache of the completed list to avoid hitting GitHub on every request.
 _completed_cache = {
@@ -58,6 +67,13 @@ _completed_cache = {
 
 # In-memory cache of the expected-dates map.
 _expected_dates_cache = {
+    "data": None,   # None means "not fetched yet"
+    "sha": None,
+    "lock": threading.Lock(),
+}
+
+# In-memory cache of the bucket-status map.
+_bucket_status_cache = {
     "data": None,   # None means "not fetched yet"
     "sha": None,
     "lock": threading.Lock(),
@@ -571,6 +587,131 @@ def _set_expected_dates_batch(changes):
                     continue
                 raise
         raise RuntimeError("Failed to persist date changes after 3 attempts")
+
+
+# === Bucket status (per-village post-completion tracking) — stored in bucket_status.json ===
+# Structure on GitHub: { "TEHSIL|Village": "bucketed"|"submitted"|"completed", ... }
+
+def _github_read_bucket_status_file():
+    """Read bucket_status.json from GitHub. Returns (dict, sha) or ({}, None)."""
+    if not has_completion_feature():
+        return {}, None
+    resp, status = _github_api_call(
+        "GET",
+        f"/repos/{GITHUB_REPO}/contents/{BUCKET_STATUS_FILE_PATH}?ref={GITHUB_BRANCH}",
+    )
+    if status == 404 or resp is None:
+        return {}, None
+    try:
+        raw = base64.b64decode(resp["content"]).decode("utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}, resp.get("sha")
+        cleaned = {}
+        for k, v in data.items():
+            if not isinstance(k, str) or "|" not in k or not isinstance(v, str):
+                continue
+            if v in BUCKET_STATUS_CODES:
+                cleaned[k] = v
+        return cleaned, resp["sha"]
+    except (ValueError, KeyError) as e:
+        print(f"[bucket-status] failed to parse existing file: {e}", file=sys.stderr)
+        return {}, resp.get("sha")
+
+
+def _github_write_bucket_status_file(new_dict, sha, commit_message):
+    """Write bucket_status.json to GitHub. Returns new SHA."""
+    content = json.dumps(new_dict, indent=2, ensure_ascii=False, sort_keys=True)
+    body = {
+        "message": commit_message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        body["sha"] = sha
+    resp, status = _github_api_call(
+        "PUT",
+        f"/repos/{GITHUB_REPO}/contents/{BUCKET_STATUS_FILE_PATH}",
+        body=body,
+    )
+    return resp["content"]["sha"] if resp and "content" in resp else None
+
+
+def load_bucket_status(force_refresh=False):
+    """Return {'TEHSIL|Village': 'code'} dict of bucket statuses."""
+    if not has_completion_feature():
+        return {}
+    with _bucket_status_cache["lock"]:
+        if _bucket_status_cache["data"] is not None and not force_refresh:
+            return dict(_bucket_status_cache["data"])
+        try:
+            data, sha = _github_read_bucket_status_file()
+            _bucket_status_cache["data"] = data
+            _bucket_status_cache["sha"] = sha
+            return dict(data)
+        except Exception as e:
+            print(f"[bucket-status] load failed: {e}", file=sys.stderr)
+            if _bucket_status_cache["data"] is None:
+                _bucket_status_cache["data"] = {}
+            return dict(_bucket_status_cache["data"])
+
+
+def _set_bucket_status_batch(changes):
+    """Apply bucket-status changes in ONE GitHub commit. `changes` is a list of
+    {tehsil, village, status} where status is a code from BUCKET_STATUS_CODES or
+    None/'' to clear."""
+    if not changes:
+        return {"changed": 0}
+    with _bucket_status_cache["lock"]:
+        for attempt in range(3):
+            if attempt == 0 and _bucket_status_cache["data"] is not None:
+                current = dict(_bucket_status_cache["data"])
+                sha = _bucket_status_cache["sha"]
+            else:
+                current, sha = _github_read_bucket_status_file()
+                _bucket_status_cache["data"] = current
+                _bucket_status_cache["sha"] = sha
+
+            new_dict = dict(current)
+            actual_changes = []
+            for c in changes:
+                key = f"{c['tehsil']}|{c['village']}"
+                new_status = c.get("status") or None
+                if new_status:
+                    if new_status not in BUCKET_STATUS_CODES:
+                        raise ValueError(
+                            f"Invalid bucket status '{new_status}' — expected one of {sorted(BUCKET_STATUS_CODES)}"
+                        )
+                    if new_dict.get(key) != new_status:
+                        new_dict[key] = new_status
+                        actual_changes.append(c)
+                else:
+                    if key in new_dict:
+                        del new_dict[key]
+                        actual_changes.append({**c, "status": None})
+
+            if not actual_changes:
+                return {"changed": 0}
+
+            if len(actual_changes) == 1:
+                c = actual_changes[0]
+                label = BUCKET_STATUS_LABELS.get(c.get("status"), "cleared") if c.get("status") else "cleared"
+                msg = f"Set bucket status for {c['village']} ({c['tehsil']}): {label}"
+            else:
+                msg = f"Update bucket status for {len(actual_changes)} villages"
+
+            try:
+                new_sha = _github_write_bucket_status_file(new_dict, sha, msg)
+                _bucket_status_cache["data"] = new_dict
+                _bucket_status_cache["sha"] = new_sha
+                return {"changed": len(actual_changes)}
+            except RuntimeError as e:
+                msg_lower = str(e).lower()
+                if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
+                    print(f"[bucket-status] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
+                    continue
+                raise
+        raise RuntimeError("Failed to persist bucket-status changes after 3 attempts")
 
 
 def has_plan_file():
@@ -1596,10 +1737,13 @@ def index():
     completed_list = []
     completed_display = []  # for template dropdown
     expected_dates_map = {}
+    bucket_status_map = {}
     # Snapshot of per-tehsil village counts BEFORE the pending filter — used
     # to render "Total Villages" alongside "Pending Villages".
     total_villages_per_tehsil = {}
     grand_total_villages = 0
+    # Reference to unfiltered df for bucket status (which needs completed villages' data too)
+    _unfiltered_current_df = None
 
     if mode == "pending" and completion_available:
         try:
@@ -1612,6 +1756,11 @@ def index():
         except Exception as e:
             print(f"[pending] Failed to load expected dates: {e}", file=sys.stderr)
             expected_dates_map = {}
+        try:
+            bucket_status_map = load_bucket_status()
+        except Exception as e:
+            print(f"[pending] Failed to load bucket status: {e}", file=sys.stderr)
+            bucket_status_map = {}
 
         # Capture pre-filter counts first (uppercased tehsil for consistent lookup)
         tehsil_upper = current_df["tehsil"].astype(str).str.upper()
@@ -1623,6 +1772,10 @@ def index():
                       .to_dict()
         )
         grand_total_villages = int(sum(total_villages_per_tehsil.values()))
+
+        # Keep unfiltered df around for the Bucket Status page (needs data on
+        # completed villages, which are about to be filtered out).
+        _unfiltered_current_df = current_df
 
         # Filter both current and prior snapshot DataFrames to exclude completed
         # villages. Everything downstream (tehsil rows, village rows, Additions,
@@ -1642,14 +1795,16 @@ def index():
 
     views = build_views(current_df, from_df, tehsils_filter)
 
-    # In pending mode, decorate each village row with expected_date and
-    # days_remaining (relative to the current snapshot date), and each tehsil
-    # row with total_villages (pre-filter count).
+    # In pending mode: decorate rows and build bucket-status views.
+    bucket_status_rows = []
+    bucket_summary_rows = []
+    bucket_grand = {"pending": 0, "completed_only": 0, "submitted": 0, "bucketed": 0, "total": 0}
     if mode == "pending" and completion_available:
+        # Decorate village rows with expected_date + days_remaining
         for row in views.get("village_rows", []):
             key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
             iso_date = expected_dates_map.get(key)
-            row["expected_date"] = iso_date  # ISO string 'YYYY-MM-DD' or None
+            row["expected_date"] = iso_date
             if iso_date:
                 try:
                     exp = datetime.strptime(iso_date, "%Y-%m-%d").date()
@@ -1658,10 +1813,108 @@ def index():
                     row["days_remaining"] = None
             else:
                 row["days_remaining"] = None
+
+        # Decorate tehsil rows with total_villages
         for row in views.get("tehsil_rows", []):
             row["total_villages"] = total_villages_per_tehsil.get(
                 str(row["tehsil"]).upper(), row.get("villages", 0)
             )
+            row["is_done"] = False
+
+        # Fully-done tehsils: appear in unfiltered df but not in filtered tehsil_rows
+        active_tehsils_upper = {str(r["tehsil"]).upper() for r in views.get("tehsil_rows", [])}
+        fully_done_upper = set(total_villages_per_tehsil.keys()) - active_tehsils_upper
+        done_rows = []
+        for t_upper in sorted(fully_done_upper):
+            done_rows.append({
+                "tehsil": t_upper,
+                "total_villages": total_villages_per_tehsil[t_upper],
+                "villages": 0,       # all done — 0 pending
+                "total": 0, "submitted": 0, "pct": 0.0, "pct_approved": 0.0,
+                "is_done": True,
+            })
+        # Append fully-done rows at bottom of tehsil table
+        views["tehsil_rows"] = list(views["tehsil_rows"]) + done_rows
+
+        # === Bucket Status page: villages that are (a) marked complete or
+        # (b) have an explicit bucket status. Villages still pending (not yet
+        # marked complete and no bucket status) do NOT appear here.
+        completed_keys = {f"{cv['tehsil']}|{cv['village']}" for cv in completed_list}
+        bucket_keys = set(bucket_status_map.keys())
+        on_bucket_page = completed_keys | bucket_keys
+
+        # Village → total_khasras lookup from the UNFILTERED df
+        # (completed villages have been filtered out of current_df by now).
+        try:
+            df_lookup = _unfiltered_current_df.copy()
+            df_lookup["_key"] = df_lookup["tehsil"].astype(str).str.upper() + "|" + df_lookup["village"].astype(str)
+            df_lookup = df_lookup.drop_duplicates("_key").set_index("_key")
+        except Exception as e:
+            print(f"[pending] Failed to build village lookup: {e}", file=sys.stderr)
+            df_lookup = None
+
+        for key in on_bucket_page:
+            # Get canonical tehsil, village, total_khasras
+            if df_lookup is not None and key in df_lookup.index:
+                r = df_lookup.loc[key]
+                tehsil = str(r["tehsil"]).upper()
+                village = str(r["village"])
+                try:
+                    total = int(r["total_khasras"]) if pd.notna(r["total_khasras"]) else 0
+                except Exception:
+                    total = 0
+            else:
+                # Fallback if a completed village isn't in the current snapshot for any reason
+                t, v = key.split("|", 1)
+                tehsil, village, total = t, v, 0
+
+            # Determine effective status
+            explicit = bucket_status_map.get(key)
+            if explicit and explicit in BUCKET_STATUS_CODES:
+                status_code = explicit
+            elif key in completed_keys:
+                # Default for completed villages without an explicit status
+                status_code = "completed"
+            else:
+                status_code = None
+
+            bucket_status_rows.append({
+                "tehsil": tehsil,
+                "village": village,
+                "total": total,
+                "status_code": status_code or "",
+                "status_label": BUCKET_STATUS_LABELS.get(status_code, "—") if status_code else "—",
+            })
+
+        bucket_status_rows.sort(key=lambda x: (x["tehsil"], x["village"]))
+
+        # === Bucket Summary page: per-tehsil counts of each status.
+        # Every tehsil appears (even if entirely pending or entirely bucketed).
+        from collections import defaultdict as _dd
+        counts_by_tehsil = _dd(lambda: {"bucketed": 0, "submitted": 0, "completed": 0})
+        for row in bucket_status_rows:
+            code = row["status_code"]
+            if code in counts_by_tehsil[row["tehsil"]]:
+                counts_by_tehsil[row["tehsil"]][code] += 1
+
+        for t_upper in sorted(total_villages_per_tehsil.keys()):
+            total_v = total_villages_per_tehsil[t_upper]
+            c = counts_by_tehsil.get(t_upper, {"bucketed": 0, "submitted": 0, "completed": 0})
+            completed_total = c["bucketed"] + c["submitted"] + c["completed"]
+            pending = total_v - completed_total
+            bucket_summary_rows.append({
+                "tehsil": t_upper,
+                "total_villages": total_v,
+                "pending": pending,
+                "completed_only": c["completed"],
+                "submitted": c["submitted"],
+                "bucketed": c["bucketed"],
+            })
+            bucket_grand["pending"] += pending
+            bucket_grand["completed_only"] += c["completed"]
+            bucket_grand["submitted"] += c["submitted"]
+            bucket_grand["bucketed"] += c["bucketed"]
+            bucket_grand["total"] += total_v
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
@@ -1689,8 +1942,56 @@ def index():
         completed_display=completed_display,
         completed_count=len(completed_list),
         grand_total_villages=grand_total_villages,
+        bucket_status_rows=bucket_status_rows,
+        bucket_summary_rows=bucket_summary_rows,
+        bucket_grand=bucket_grand,
+        bucket_status_labels=BUCKET_STATUS_LABELS,
         **views,
     )
+
+
+@app.route("/api/set-bucket-status", methods=["POST"])
+def set_bucket_status():
+    """Batch-set bucket status for villages. Requires password.
+    Body: {password, changes: [{tehsil, village, status}]}. status=null clears."""
+    if not has_completion_feature():
+        return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    raw_changes = data.get("changes")
+
+    if password != COMPLETION_PASSWORD:
+        return jsonify({"error": "Wrong password."}), 401
+    if not isinstance(raw_changes, list) or not raw_changes:
+        return jsonify({"error": "changes must be a non-empty list."}), 400
+    if len(raw_changes) > 200:
+        return jsonify({"error": "Too many changes in one request (max 200)."}), 400
+
+    normalized = []
+    for c in raw_changes:
+        if not isinstance(c, dict):
+            return jsonify({"error": "each change must be an object with tehsil, village, status."}), 400
+        t = str(c.get("tehsil", "")).strip().upper()
+        v = str(c.get("village", "")).strip()
+        s = c.get("status")
+        if s is not None:
+            s = str(s).strip() or None
+        if not t or not v:
+            return jsonify({"error": "each change needs non-empty tehsil and village."}), 400
+        if s is not None and s not in BUCKET_STATUS_CODES:
+            return jsonify({"error": f"invalid status '{s}' — must be one of {sorted(BUCKET_STATUS_CODES)}"}), 400
+        normalized.append({"tehsil": t, "village": v, "status": s})
+
+    try:
+        result = _set_bucket_status_batch(normalized)
+        return jsonify({
+            "success": True,
+            "requested": len(normalized),
+            "changed": result["changed"],
+        })
+    except Exception as e:
+        print(f"[set-bucket-status] failed: {e}", file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/dev-unlock", methods=["POST"])
@@ -1874,12 +2175,33 @@ def _resolve_download_context(pending_mode=False):
     tehsils_filter = parse_tehsils_param(request.args)
 
     expected_dates_map = {}
+    bucket_status_map = {}
+    completed_list = []
+    total_villages_per_tehsil = {}
+    _unfiltered = None
     if pending_mode and has_completion_feature():
-        # Filter current + prior to only pending villages (same logic as the /data-punching route)
         try:
             completed_list = load_completed_villages()
         except Exception:
             completed_list = []
+        try:
+            expected_dates_map = load_expected_dates()
+        except Exception:
+            expected_dates_map = {}
+        try:
+            bucket_status_map = load_bucket_status()
+        except Exception:
+            bucket_status_map = {}
+        # Capture pre-filter data
+        tehsil_upper = current_df["tehsil"].astype(str).str.upper()
+        total_villages_per_tehsil = (
+            current_df.assign(_t=tehsil_upper)
+                      .drop_duplicates(subset=["_t", "village"])
+                      .groupby("_t")
+                      .size()
+                      .to_dict()
+        )
+        _unfiltered = current_df
         completed_set = {(cv["tehsil"], cv["village"]) for cv in completed_list}
         if completed_set:
             def _is_pending(df):
@@ -1889,14 +2211,12 @@ def _resolve_download_context(pending_mode=False):
             current_df = _is_pending(current_df)
             if from_df is not None:
                 from_df = _is_pending(from_df)
-        try:
-            expected_dates_map = load_expected_dates()
-        except Exception:
-            expected_dates_map = {}
 
     views = build_views(current_df, from_df, tehsils_filter)
 
-    if pending_mode:
+    bucket_status_rows = []
+    bucket_summary_rows = []
+    if pending_mode and has_completion_feature():
         # Decorate village rows with expected_date + days_remaining
         for row in views.get("village_rows", []):
             key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
@@ -1911,9 +2231,85 @@ def _resolve_download_context(pending_mode=False):
             else:
                 row["days_remaining"] = None
 
+        # Decorate tehsil rows with total_villages + is_done marker, and add
+        # fully-done tehsils that were filtered out.
+        for row in views.get("tehsil_rows", []):
+            row["total_villages"] = total_villages_per_tehsil.get(
+                str(row["tehsil"]).upper(), row.get("villages", 0)
+            )
+            row["is_done"] = False
+        active_tehsils_upper = {str(r["tehsil"]).upper() for r in views.get("tehsil_rows", [])}
+        fully_done_upper = set(total_villages_per_tehsil.keys()) - active_tehsils_upper
+        done_rows = []
+        for t_upper in sorted(fully_done_upper):
+            done_rows.append({
+                "tehsil": t_upper,
+                "total_villages": total_villages_per_tehsil[t_upper],
+                "villages": 0, "total": 0, "submitted": 0, "pct": 0.0, "pct_approved": 0.0,
+                "additions": None, "band": None, "is_done": True,
+            })
+        views["tehsil_rows"] = list(views["tehsil_rows"]) + done_rows
+
+        # Bucket status rows
+        completed_keys = {f"{cv['tehsil']}|{cv['village']}" for cv in completed_list}
+        bucket_keys = set(bucket_status_map.keys())
+        on_bucket_page = completed_keys | bucket_keys
+        if _unfiltered is not None:
+            df_lookup = _unfiltered.copy()
+            df_lookup["_key"] = df_lookup["tehsil"].astype(str).str.upper() + "|" + df_lookup["village"].astype(str)
+            df_lookup = df_lookup.drop_duplicates("_key").set_index("_key")
+            for key in on_bucket_page:
+                if key in df_lookup.index:
+                    r = df_lookup.loc[key]
+                    tehsil = str(r["tehsil"]).upper()
+                    village = str(r["village"])
+                    try:
+                        total = int(r["total_khasras"]) if pd.notna(r["total_khasras"]) else 0
+                    except Exception:
+                        total = 0
+                else:
+                    t, v = key.split("|", 1)
+                    tehsil, village, total = t, v, 0
+                explicit = bucket_status_map.get(key)
+                if explicit and explicit in BUCKET_STATUS_CODES:
+                    status_code = explicit
+                elif key in completed_keys:
+                    status_code = "completed"
+                else:
+                    status_code = None
+                bucket_status_rows.append({
+                    "tehsil": tehsil, "village": village, "total": total,
+                    "status_code": status_code or "",
+                    "status_label": BUCKET_STATUS_LABELS.get(status_code, "—") if status_code else "—",
+                })
+            bucket_status_rows.sort(key=lambda x: (x["tehsil"], x["village"]))
+
+        # Bucket summary
+        from collections import defaultdict as _dd
+        counts_by_tehsil = _dd(lambda: {"bucketed": 0, "submitted": 0, "completed": 0})
+        for row in bucket_status_rows:
+            code = row["status_code"]
+            if code in counts_by_tehsil[row["tehsil"]]:
+                counts_by_tehsil[row["tehsil"]][code] += 1
+        for t_upper in sorted(total_villages_per_tehsil.keys()):
+            total_v = total_villages_per_tehsil[t_upper]
+            c = counts_by_tehsil.get(t_upper, {"bucketed": 0, "submitted": 0, "completed": 0})
+            completed_total = c["bucketed"] + c["submitted"] + c["completed"]
+            pending = total_v - completed_total
+            bucket_summary_rows.append({
+                "tehsil": t_upper,
+                "total_villages": total_v,
+                "pending": pending,
+                "completed_only": c["completed"],
+                "submitted": c["submitted"],
+                "bucketed": c["bucketed"],
+            })
+
     return {"views": views, "to_date": to_date, "from_date": from_date,
             "gap_days": (to_date - from_date).days if from_date else 0,
-            "pending_mode": pending_mode}
+            "pending_mode": pending_mode,
+            "bucket_status_rows": bucket_status_rows,
+            "bucket_summary_rows": bucket_summary_rows}
 
 
 def _panels_for_view(views, view_key):
@@ -1946,7 +2342,12 @@ def download():
     if not ctx:
         return "No snapshots found.", 500
     view_key = request.args.get("view", "all")
-    buf = _generate_workbook(ctx["views"], ctx["to_date"], ctx["from_date"], view_key, pending_mode=pending_mode)
+    buf = _generate_workbook(
+        ctx["views"], ctx["to_date"], ctx["from_date"], view_key,
+        pending_mode=pending_mode,
+        bucket_status_rows=ctx.get("bucket_status_rows", []),
+        bucket_summary_rows=ctx.get("bucket_summary_rows", []),
+    )
     tail = "" if view_key == "all" else f"_{view_key}"
     if pending_mode:
         tail = "_pending"
@@ -1998,7 +2399,8 @@ def download_pdf():
 
 # ---------- Excel workbook ----------
 
-def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=False):
+def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=False,
+                        bucket_status_rows=None, bucket_summary_rows=None):
     def _include(key):
         return view_key == "all" or view_key == key
 
@@ -2042,38 +2444,74 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
     # === TEHSIL WISE ===
     if _include("tehsil"):
         ws = wb.create_sheet("TEHSIL WISE")
-        headers = ["S.NO", "TEHSIL", "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
-                   "SUBMITTED", "% COMPLETION"]
+        headers = ["S.NO", "TEHSIL"]
+        if pending_mode:
+            headers.extend(["TOTAL VILLAGES", "PENDING VILLAGES"])
+        else:
+            headers.append("NUMBER OF VILLAGES")
+        headers.extend(["TOTAL SURVEY NOS", "SUBMITTED", "% COMPLETION"])
         if additions_hdr:
             headers.append(additions_hdr)
         headers.append("% APPROVED")
         write_hdr(ws, headers)
         approved_col = len(headers)
         additions_col = len(headers) - 1 if additions_hdr else None
+        vill_offset = 4 if pending_mode else 3
         for i, row in enumerate(views["tehsil_rows"], start=1):
             r = i + 1
-            vals = [i, row["tehsil"], row["villages"], row["total"], row["submitted"], round(row["pct"], 2)]
-            aligns = [center, left, center, center, center, center]
-            if additions_hdr:
-                vals.append(row["additions"] if row["additions"] is not None else "—")
+            vals = [i, row["tehsil"]]
+            aligns = [center, left]
+            if pending_mode:
+                vals.extend([row.get("total_villages", row["villages"]), row["villages"]])
+                aligns.extend([center, center])
+            else:
+                vals.append(row["villages"])
                 aligns.append(center)
-            vals.append(round(row["pct_approved"], 2))
-            aligns.append(center)
+            if row.get("is_done"):
+                # Fully-done tehsil: mark as complete, don't emit numeric noise
+                vals.extend(["Complete", "Complete", "Complete"])
+                aligns.extend([center, center, center])
+                if additions_hdr:
+                    vals.append("—"); aligns.append(center)
+                vals.append("Complete"); aligns.append(center)
+            else:
+                vals.extend([row["total"], row["submitted"], round(row["pct"], 2)])
+                aligns.extend([center, center, center])
+                if additions_hdr:
+                    vals.append(row["additions"] if row["additions"] is not None else "—")
+                    aligns.append(center)
+                vals.append(round(row["pct_approved"], 2))
+                aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
                 c.alignment = a; c.font = body_font; c.border = border
-                if ci in (3, 4, 5): c.number_format = "#,##0"
-                if ci == 6: c.number_format = '0.00"%"'
-                if additions_col and ci == additions_col and isinstance(v, int):
-                    c.number_format = "+#,##0;-#,##0;0"
-                if ci == approved_col: c.number_format = '0.00"%"'
+                if pending_mode:
+                    if ci in (3, 4): c.number_format = "#,##0"
+                    if ci in (5, 6) and isinstance(v, int): c.number_format = "#,##0"
+                    if ci == 7 and isinstance(v, (int, float)): c.number_format = '0.00"%"'
+                    if additions_col and ci == additions_col and isinstance(v, int):
+                        c.number_format = "+#,##0;-#,##0;0"
+                    if ci == approved_col and isinstance(v, (int, float)): c.number_format = '0.00"%"'
+                else:
+                    if ci in (3, 4, 5): c.number_format = "#,##0"
+                    if ci == 6: c.number_format = '0.00"%"'
+                    if additions_col and ci == additions_col and isinstance(v, int):
+                        c.number_format = "+#,##0;-#,##0;0"
+                    if ci == approved_col: c.number_format = '0.00"%"'
         # TOTAL
         tt = len(views["tehsil_rows"]) + 2
-        ws.cell(row=tt, column=2, value="TOTAL").alignment = left
-        ws.cell(row=tt, column=3, value=grand["villages"]).alignment = center
-        ws.cell(row=tt, column=4, value=grand["total_khasras"]).alignment = center
-        ws.cell(row=tt, column=5, value=grand["submitted"]).alignment = center
-        ws.cell(row=tt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
+        ws.cell(row=tt, column=2, value=("TOTAL (Pending)" if pending_mode else "TOTAL")).alignment = left
+        if pending_mode:
+            # Sum total_villages column and pending villages column across tehsil_rows
+            total_v = sum(r.get("total_villages", r["villages"]) for r in views["tehsil_rows"])
+            pending_v = sum(r["villages"] for r in views["tehsil_rows"])
+            ws.cell(row=tt, column=3, value=total_v).alignment = center
+            ws.cell(row=tt, column=4, value=pending_v).alignment = center
+        else:
+            ws.cell(row=tt, column=3, value=grand["villages"]).alignment = center
+        ws.cell(row=tt, column=vill_offset + 1, value=grand["total_khasras"]).alignment = center
+        ws.cell(row=tt, column=vill_offset + 2, value=grand["submitted"]).alignment = center
+        ws.cell(row=tt, column=vill_offset + 3, value=round(grand["overall_pct"], 2)).alignment = center
         if additions_col:
             ws.cell(row=tt, column=additions_col, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
         ws.cell(row=tt, column=approved_col, value=round(grand["overall_pct_approved"], 2)).alignment = center
@@ -2312,6 +2750,61 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
+
+    # === BUCKET STATUS + SUMMARY (pending mode only) ===
+    if pending_mode and (bucket_status_rows or bucket_summary_rows):
+        if bucket_status_rows:
+            ws = wb.create_sheet("BUCKET STATUS")
+            headers = ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "CURRENT STATUS"]
+            write_hdr(ws, headers)
+            for i, row in enumerate(bucket_status_rows or [], start=1):
+                r = i + 1
+                vals = [i, row["tehsil"], row["village"], row["total"], row["status_label"]]
+                aligns = [center, left, left, center, left]
+                for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                    c = ws.cell(row=r, column=ci, value=v)
+                    c.alignment = a; c.font = body_font; c.border = border
+                    if ci == 4: c.number_format = "#,##0"
+            for i, w in enumerate([7, 14, 28, 20, 40], start=1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+            ws.freeze_panes = "A2"
+
+        if bucket_summary_rows:
+            ws = wb.create_sheet("BUCKET SUMMARY")
+            headers = ["S.NO", "TEHSIL", "TOTAL VILLAGES", "PENDING",
+                       "COMPLETED (NOT SUBMITTED)", "SUBMITTED FOR BUCKETING", "BUCKETED"]
+            write_hdr(ws, headers)
+            for i, row in enumerate(bucket_summary_rows or [], start=1):
+                r = i + 1
+                vals = [i, row["tehsil"], row["total_villages"], row["pending"],
+                        row["completed_only"], row["submitted"], row["bucketed"]]
+                aligns = [center, left, center, center, center, center, center]
+                for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
+                    c = ws.cell(row=r, column=ci, value=v)
+                    c.alignment = a; c.font = body_font; c.border = border
+                    if ci >= 3: c.number_format = "#,##0"
+            # TOTAL row
+            tot_row = len(bucket_summary_rows) + 2
+            totals = {"total": 0, "pending": 0, "completed_only": 0, "submitted": 0, "bucketed": 0}
+            for row in bucket_summary_rows:
+                totals["total"] += row["total_villages"]
+                totals["pending"] += row["pending"]
+                totals["completed_only"] += row["completed_only"]
+                totals["submitted"] += row["submitted"]
+                totals["bucketed"] += row["bucketed"]
+            ws.cell(row=tot_row, column=2, value="TOTAL").alignment = left
+            ws.cell(row=tot_row, column=3, value=totals["total"]).alignment = center
+            ws.cell(row=tot_row, column=4, value=totals["pending"]).alignment = center
+            ws.cell(row=tot_row, column=5, value=totals["completed_only"]).alignment = center
+            ws.cell(row=tot_row, column=6, value=totals["submitted"]).alignment = center
+            ws.cell(row=tot_row, column=7, value=totals["bucketed"]).alignment = center
+            for c in range(1, 8):
+                cc = ws.cell(row=tot_row, column=c)
+                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
+                if c >= 3: cc.number_format = "#,##0"
+            for i, w in enumerate([7, 16, 16, 12, 24, 22, 12], start=1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+            ws.freeze_panes = "A2"
 
     # === META (always) ===
     ws4 = wb.create_sheet("META")
