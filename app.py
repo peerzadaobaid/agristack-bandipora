@@ -43,6 +43,9 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "peerzadaobaid/agristack-bandipora").strip()
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
 COMPLETION_PASSWORD = os.environ.get("COMPLETION_PASSWORD", "Peerzada@1674")
+# Developer options password — hardcoded per user request. Unlocks editing
+# controls on the Pending villages progress view.
+DEVELOPER_PASSWORD = "1234@"
 COMPLETED_FILE_PATH = "completed_villages.json"
 EXPECTED_DATES_FILE_PATH = "expected_dates.json"
 
@@ -1669,6 +1672,19 @@ def index():
     )
 
 
+@app.route("/api/dev-unlock", methods=["POST"])
+def dev_unlock():
+    """Verify the developer password. On success returns the completion password
+    so the frontend can silently include it in subsequent mark-complete /
+    set-dates calls without prompting the user again. Session-only, browser tab
+    scope — the frontend stores it in sessionStorage."""
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    if password != DEVELOPER_PASSWORD:
+        return jsonify({"error": "Wrong developer password."}), 401
+    return jsonify({"success": True, "api_key": COMPLETION_PASSWORD})
+
+
 @app.route("/api/set-dates", methods=["POST"])
 def set_dates():
     """Batch-set expected completion dates for villages. Requires password.
@@ -1827,7 +1843,7 @@ def _check_download_password():
     return True
 
 
-def _resolve_download_context():
+def _resolve_download_context(pending_mode=False):
     snapshots = all_snapshots()
     if not snapshots:
         return None
@@ -1835,9 +1851,48 @@ def _resolve_download_context():
     current_df = load_snapshot(snapshot_for_date(snapshots, to_date))
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
     tehsils_filter = parse_tehsils_param(request.args)
+
+    expected_dates_map = {}
+    if pending_mode and has_completion_feature():
+        # Filter current + prior to only pending villages (same logic as the /data-punching route)
+        try:
+            completed_list = load_completed_villages()
+        except Exception:
+            completed_list = []
+        completed_set = {(cv["tehsil"], cv["village"]) for cv in completed_list}
+        if completed_set:
+            def _is_pending(df):
+                key = df["tehsil"].str.upper().astype(str) + "|" + df["village"].astype(str)
+                excluded = {f"{t}|{v}" for t, v in completed_set}
+                return df[~key.isin(excluded)].copy()
+            current_df = _is_pending(current_df)
+            if from_df is not None:
+                from_df = _is_pending(from_df)
+        try:
+            expected_dates_map = load_expected_dates()
+        except Exception:
+            expected_dates_map = {}
+
     views = build_views(current_df, from_df, tehsils_filter)
+
+    if pending_mode:
+        # Decorate village rows with expected_date + days_remaining
+        for row in views.get("village_rows", []):
+            key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
+            iso_date = expected_dates_map.get(key)
+            row["expected_date"] = iso_date
+            if iso_date:
+                try:
+                    exp = datetime.strptime(iso_date, "%Y-%m-%d").date()
+                    row["days_remaining"] = (exp - to_date).days
+                except ValueError:
+                    row["days_remaining"] = None
+            else:
+                row["days_remaining"] = None
+
     return {"views": views, "to_date": to_date, "from_date": from_date,
-            "gap_days": (to_date - from_date).days if from_date else 0}
+            "gap_days": (to_date - from_date).days if from_date else 0,
+            "pending_mode": pending_mode}
 
 
 def _panels_for_view(views, view_key):
@@ -1865,12 +1920,15 @@ def download():
     if not _check_download_password():
         return Response("Authentication required", 401,
                         {"WWW-Authenticate": 'Basic realm="AgriStack Download"'})
-    ctx = _resolve_download_context()
+    pending_mode = request.args.get("pending", "").strip() in ("1", "true", "yes")
+    ctx = _resolve_download_context(pending_mode=pending_mode)
     if not ctx:
         return "No snapshots found.", 500
     view_key = request.args.get("view", "all")
-    buf = _generate_workbook(ctx["views"], ctx["to_date"], ctx["from_date"], view_key)
+    buf = _generate_workbook(ctx["views"], ctx["to_date"], ctx["from_date"], view_key, pending_mode=pending_mode)
     tail = "" if view_key == "all" else f"_{view_key}"
+    if pending_mode:
+        tail = "_pending"
     filename = f"AGRISTACK_Dashboard_{ctx['to_date'].strftime('%Y-%m-%d')}{tail}.xlsx"
     return send_file(buf,
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1919,7 +1977,7 @@ def download_pdf():
 
 # ---------- Excel workbook ----------
 
-def _generate_workbook(views, to_date, from_date, view_key="all"):
+def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=False):
     def _include(key):
         return view_key == "all" or view_key == key
 
@@ -2155,13 +2213,22 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
 
     # === VILLAGE WISE ===
     if _include("village"):
-        ws = wb.create_sheet("VILLAGE WISE")
+        ws = wb.create_sheet("VILLAGE WISE" if not pending_mode else "PENDING VILLAGES")
         headers = ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "NAME OF PATWARI",
                    "SUBMITTED", "VERIFIED", "APPROVED"]
         if additions_hdr:
             headers.append(additions_hdr)
+        if pending_mode:
+            headers.extend(["DATE OF COMPLETION", "DAYS TO COMPLETION"])
         write_hdr(ws, headers)
-        additions_col = len(headers) if additions_hdr else None
+        additions_col = None
+        if additions_hdr:
+            additions_col = 9  # position after Approved
+        date_col = None
+        days_col = None
+        if pending_mode:
+            date_col = 10 if additions_hdr else 9
+            days_col = date_col + 1
         total_cols = len(headers)
         for i, row in enumerate(views["village_rows"], start=1):
             r = i + 1
@@ -2170,6 +2237,21 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
             aligns = [center, left, left, center, left, center, center, center]
             if additions_hdr:
                 vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
+            if pending_mode:
+                iso = row.get("expected_date")
+                vals.append(iso if iso else "—")
+                aligns.append(center)
+                days = row.get("days_remaining")
+                if days is None:
+                    days_txt = "—"
+                elif days > 0:
+                    days_txt = f"{days} day{'s' if days != 1 else ''} remaining"
+                elif days == 0:
+                    days_txt = "Due today"
+                else:
+                    days_txt = f"Delayed by {-days} day{'s' if days != -1 else ''}"
+                vals.append(days_txt)
                 aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
@@ -2181,7 +2263,7 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
         vt = len(views["village_rows"]) + 2
         v_tot = views.get("village_totals")
         use_filtered = v_tot is not None and any(r.get("band") for r in views["village_rows"])
-        ws.cell(row=vt, column=2, value=("TOTAL (Filtered)" if use_filtered else "TOTAL")).alignment = left
+        ws.cell(row=vt, column=2, value=("TOTAL (Filtered)" if use_filtered else ("TOTAL (Pending)" if pending_mode else "TOTAL"))).alignment = left
         if use_filtered:
             ws.cell(row=vt, column=4, value=v_tot["total"]).alignment = center
             ws.cell(row=vt, column=6, value=v_tot["submitted"]).alignment = center
@@ -2205,6 +2287,7 @@ def _generate_workbook(views, to_date, from_date, view_key="all"):
                 cc.number_format = "+#,##0;-#,##0;0"
         widths = [7, 14, 28, 20, 28, 14, 14, 14]
         if additions_hdr: widths.append(22)
+        if pending_mode: widths.extend([20, 22])
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
@@ -2346,16 +2429,47 @@ def debug_files():
         with open(tpl_path, "r", encoding="utf-8") as f:
             content = f.read()
         has_toggle = "mode-toggle-checkbox" in content
-        has_plan_available = "plan_available" in content
-        has_target_view = "Target Based view" in content
+        has_completion_check = "completion_available" in content
+        has_pending_label = "Pending villages progress" in content
         lines.append(f"Contains 'mode-toggle-checkbox': {has_toggle}")
-        lines.append(f"Contains 'plan_available': {has_plan_available}")
-        lines.append(f"Contains 'Target Based view': {has_target_view}")
-        if has_toggle and has_plan_available:
-            lines.append("→ Template IS the updated version. Toggle should render.")
+        lines.append(f"Contains 'completion_available' Jinja check: {has_completion_check}")
+        lines.append(f"Contains 'Pending villages progress' label: {has_pending_label}")
+        if has_toggle and has_completion_check and has_pending_label:
+            lines.append("→ Template IS the latest version.")
+        elif has_toggle and "plan_available" in content:
+            lines.append("→ Template is an older version (from Target Based view era).")
+            lines.append("   Re-upload templates/index.html from the latest zip.")
         else:
-            lines.append("→ Template is the OLD version. That's why the toggle is missing.")
-            lines.append("   You need to re-upload templates/index.html to GitHub.")
+            lines.append("→ Template is missing pieces. Re-upload templates/index.html.")
+
+    # === Actual HTML rendered ===
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append("LIVE TOGGLE RENDER TEST")
+    lines.append("=" * 60)
+    try:
+        from flask import render_template_string
+        # Force-render just the toggle snippet from the template file
+        with open(tpl_path, "r", encoding="utf-8") as f:
+            tpl = f.read()
+        # Extract the toggle block from the source file
+        m = re.search(r"(\{% if completion_available %\}.*?\{% endif %\})", tpl, re.DOTALL)
+        if m:
+            snippet = m.group(1)
+            rendered = render_template_string(snippet, completion_available=has_completion_feature(), mode="default")
+            lines.append(f"With completion_available={has_completion_feature()}, the toggle block renders as:")
+            lines.append("-" * 60)
+            lines.append(rendered.strip() or "(empty — the {% if %} evaluated False)")
+            lines.append("-" * 60)
+            if rendered.strip():
+                lines.append("→ Server IS sending toggle HTML. If it's missing in browser, it's client-side (cache/proxy).")
+            else:
+                lines.append("→ Server is NOT sending toggle HTML. completion_available is False on this request.")
+        else:
+            lines.append("Could not locate the {% if completion_available %} block in the template.")
+    except Exception as e:
+        lines.append(f"Render test failed: {type(e).__name__}: {e}")
+
     return "<pre style='font-family:monospace;font-size:13px;padding:20px;background:#f6f3ec;color:#1f3f2e;line-height:1.5'>" + "\n".join(lines) + "</pre>"
 
 
