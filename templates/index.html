@@ -527,6 +527,36 @@
      Body class 'submission-visible' reveals them. */
   body:not(.submission-visible) .col-submission { display: none; }
 
+  /* Distinct tan/wheat color for the submission-analysis columns so they stand
+     out clearly from the surrounding data. Applied to both header and cells. */
+  th.col-submission {
+    background-color: #E5D9B8 !important;
+    color: #4A3820;
+    letter-spacing: 0.03em;
+  }
+  td.col-submission {
+    background-color: #F0E6D0 !important;
+    border-left: 1px solid #D9C89A;
+    border-right: 1px solid #D9C89A;
+  }
+  /* Extra emphasis on the RDA number so it's readable in the tinted cell */
+  td.required-daily-cell {
+    font-weight: 500;
+    color: #3A2C10;
+  }
+
+  /* Patwari grouping: multi-village patwaris get a faint tint that alternates
+     between two colors, so consecutive multi-village patwari groups are
+     visually separable. Single-village patwaris get no tint. */
+  tr.pgroup-a td { background-color: #F3F0E4; }
+  tr.pgroup-b td { background-color: #ECEEE3; }
+  /* Emphasize the patwari name cell for grouped rows */
+  tr.pgroup-a td:nth-child(4),
+  tr.pgroup-b td:nth-child(4) {
+    font-weight: 500;
+    color: var(--ink);
+  }
+
   .submission-toggle-row {
     display: flex;
     align-items: center;
@@ -1016,7 +1046,11 @@
       <button type="button" id="submission-toggle-btn" class="submission-toggle-btn">
         <span class="toggle-chevron">▸</span> Show submission analysis
       </button>
-      <span class="submission-toggle-hint">Reveals <strong>Submission Pending</strong> and <strong>Required Daily Avg</strong> columns.</span>
+      <span class="submission-toggle-hint">
+        Reveals tan-tinted <strong>Submission Pending</strong> and <strong>Required Daily Avg</strong> columns.
+        Rows are sorted by tehsil then patwari; patwaris with multiple villages appear in a
+        faint colour block.
+      </span>
     </div>
     <div class="table-wrap">
       <table>
@@ -1045,7 +1079,7 @@
         </thead>
         <tbody>
           {% for row in village_rows %}
-          <tr>
+          <tr class="{{ row.patwari_group_class or '' }}">
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.tehsil }}</td>
             <td>{{ row.village }}</td>
