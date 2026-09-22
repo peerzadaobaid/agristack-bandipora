@@ -522,6 +522,51 @@
   .status-submitted { background: #EDE1C4; color: #7A5A20; }
   .status-completed { background: #E8DAD2; color: #7A3820; }
   .status-none { color: var(--mute); font-style: italic; }
+
+  /* Collapsed by default: hide Submission Pending + Required Daily Avg columns.
+     Body class 'submission-visible' reveals them. */
+  body:not(.submission-visible) .col-submission { display: none; }
+
+  .submission-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .submission-toggle-btn {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    padding: 6px 12px;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    letter-spacing: 0.02em;
+    transition: background 140ms;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .submission-toggle-btn:hover { background: var(--tint-good, #E8EEDE); }
+  .submission-toggle-btn .toggle-chevron {
+    display: inline-block;
+    transition: transform 180ms;
+    font-size: 10px;
+  }
+  body.submission-visible .submission-toggle-btn .toggle-chevron {
+    transform: rotate(90deg);
+  }
+  .submission-toggle-hint {
+    color: var(--mute);
+    font-size: 12px;
+  }
+  .rda-overdue {
+    color: #B33A3A;
+    font-weight: 500;
+    font-size: 12px;
+  }
 </style>
 </head>
 <body>
@@ -967,6 +1012,12 @@
       the Excel below to share, or unlock <strong>Developer options</strong> to set target dates
       and mark villages as complete.
     </div>
+    <div class="submission-toggle-row">
+      <button type="button" id="submission-toggle-btn" class="submission-toggle-btn">
+        <span class="toggle-chevron">▸</span> Show submission analysis
+      </button>
+      <span class="submission-toggle-hint">Reveals <strong>Submission Pending</strong> and <strong>Required Daily Avg</strong> columns.</span>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -974,9 +1025,11 @@
             <th style="width:55px">S.NO</th>
             <th style="width:110px">Tehsil</th>
             <th>Village</th>
-            <th style="width:140px">Total Survey Nos</th>
             <th style="width:190px">Name of Patwari</th>
+            <th style="width:140px">Total Survey Nos</th>
             <th style="width:110px">Submitted</th>
+            <th style="width:140px" class="col-submission">Submission Pending</th>
+            <th style="width:140px" class="col-submission">Required Daily Avg</th>
             <th style="width:100px">Verified</th>
             <th style="width:100px">Approved</th>
             {% if has_additions %}<th style="width:170px">{{ additions_label }}</th>{% endif %}
@@ -996,9 +1049,21 @@
             <td class="center">{{ loop.index }}</td>
             <td>{{ row.tehsil }}</td>
             <td>{{ row.village }}</td>
-            <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td>{{ row.patwari }}</td>
+            <td class="num">{{ "{:,}".format(row.total) }}</td>
             <td class="num">{{ "{:,}".format(row.submitted) }}</td>
+            <td class="num col-submission">{{ "{:,}".format(row.submission_pending) }}</td>
+            <td class="num col-submission required-daily-cell"
+                data-tehsil="{{ row.tehsil }}" data-village="{{ row.village }}"
+                data-pending="{{ row.submission_pending }}">
+              {% if row.required_daily_avg is none %}
+                &mdash;
+              {% elif row.required_daily_avg == -1 %}
+                <span class="rda-overdue">Overdue</span>
+              {% else %}
+                {{ "{:,}".format(row.required_daily_avg) }}
+              {% endif %}
+            </td>
             <td class="num">{{ "{:,}".format(row.verified) }}</td>
             <td class="num">{{ "{:,}".format(row.approved) }}</td>
             {% if has_additions %}{{ additions_cell(row.additions) }}{% endif %}
@@ -1036,9 +1101,11 @@
             <td></td>
             <td></td>
             <td>TOTAL (Pending)</td>
-            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
             <td></td>
+            <td class="num">{{ "{:,}".format(grand.total_khasras) }}</td>
             <td class="num">{{ "{:,}".format(grand.submitted) }}</td>
+            <td class="num col-submission">{{ "{:,}".format(grand.total_khasras - grand.submitted) }}</td>
+            <td class="col-submission"></td>
             <td class="num">{{ "{:,}".format(overall_totals.verified) }}</td>
             <td class="num">{{ "{:,}".format(overall_totals.approved) }}</td>
             {% if has_additions %}{{ additions_cell(grand.additions) }}{% endif %}
@@ -1362,6 +1429,7 @@
     const row = dateInput.closest('tr');
     if (!row) return;
     const daysCell = row.querySelector('.days-cell');
+    const rdaCell = row.querySelector('.required-daily-cell');
     if (!daysCell) return;
     const iso = dateInput.value;
     let days = null;
@@ -1371,6 +1439,23 @@
     if (days !== null) {
       if (days < 0) daysCell.classList.add('days-delayed');
       else if (days <= 2) daysCell.classList.add('days-soon');
+    }
+    // Live-update Required Daily Avg
+    if (rdaCell) {
+      const pending = parseInt(rdaCell.dataset.pending || '0', 10);
+      let rdaText;
+      if (days === null) {
+        rdaText = '\u2014';
+        rdaCell.innerHTML = '\u2014';
+      } else if (pending === 0) {
+        rdaCell.innerHTML = '0';
+      } else if (days < 0) {
+        rdaCell.innerHTML = '<span class="rda-overdue">Overdue</span>';
+      } else if (days === 0) {
+        rdaCell.innerHTML = pending.toLocaleString();
+      } else {
+        rdaCell.innerHTML = Math.ceil(pending / days).toLocaleString();
+      }
     }
   }
   function dateInputIsDirty(inp) {
@@ -1567,6 +1652,32 @@
         alert('Network error: ' + err.message);
         unmarkBtn.disabled = false;
       }
+    });
+  }
+
+  // === Submission analysis toggle: reveals Submission Pending + Required Daily Avg columns ===
+  // State remembered in localStorage so the toggle survives navigation.
+  const submissionToggleBtn = document.getElementById('submission-toggle-btn');
+  const SUBMISSION_KEY = 'pending-submission-visible';
+  function applySubmissionVisibility() {
+    const visible = localStorage.getItem(SUBMISSION_KEY) === '1';
+    if (visible) document.body.classList.add('submission-visible');
+    else document.body.classList.remove('submission-visible');
+    if (submissionToggleBtn) {
+      const chevron = '<span class="toggle-chevron">\u25B8</span>';
+      submissionToggleBtn.innerHTML = visible
+        ? `${chevron} Hide submission analysis`
+        : `${chevron} Show submission analysis`;
+    }
+  }
+  applySubmissionVisibility();
+  if (submissionToggleBtn) {
+    submissionToggleBtn.addEventListener('click', () => {
+      const currentlyVisible = document.body.classList.contains('submission-visible');
+      try {
+        localStorage.setItem(SUBMISSION_KEY, currentlyVisible ? '0' : '1');
+      } catch (e) {}
+      applySubmissionVisibility();
     });
   }
 
