@@ -1834,6 +1834,33 @@ def index():
             else:
                 row["required_daily_avg"] = int(math.ceil(sp / dr))
 
+        # Sort village_rows by (tehsil, patwari, village) — so patwaris with
+        # multiple villages appear together within their tehsil.
+        views["village_rows"] = sorted(
+            views["village_rows"],
+            key=lambda r: (
+                str(r.get("tehsil", "")).upper(),
+                str(r.get("patwari", "")).upper(),
+                str(r.get("village", "")).upper(),
+            ),
+        )
+        # Assign a group tint to patwaris who have multiple villages, alternating
+        # between two soft colors so consecutive multi-village patwaris are
+        # visually separable. Single-village patwaris get no tint.
+        from collections import Counter as _Counter
+        patwari_counts = _Counter(r["patwari"] for r in views["village_rows"])
+        _group_idx = -1
+        _last_multi_patwari = None
+        for row in views["village_rows"]:
+            p = row.get("patwari", "")
+            if patwari_counts.get(p, 0) > 1:
+                if p != _last_multi_patwari:
+                    _group_idx += 1
+                    _last_multi_patwari = p
+                row["patwari_group_class"] = "pgroup-a" if _group_idx % 2 == 0 else "pgroup-b"
+            else:
+                row["patwari_group_class"] = ""
+
         # Decorate tehsil rows with total_villages
         for row in views.get("tehsil_rows", []):
             row["total_villages"] = total_villages_per_tehsil.get(
@@ -2264,6 +2291,16 @@ def _resolve_download_context(pending_mode=False):
                 row["required_daily_avg"] = sp
             else:
                 row["required_daily_avg"] = int(_math.ceil(sp / dr))
+
+        # Sort village_rows by (tehsil, patwari, village) to match on-screen order
+        views["village_rows"] = sorted(
+            views["village_rows"],
+            key=lambda r: (
+                str(r.get("tehsil", "")).upper(),
+                str(r.get("patwari", "")).upper(),
+                str(r.get("village", "")).upper(),
+            ),
+        )
 
         # Decorate tehsil rows with total_villages + is_done marker, and add
         # fully-done tehsils that were filtered out.
