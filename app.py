@@ -16,15 +16,10 @@ import os
 import re
 import io
 import sys
-import json
-import base64
-import urllib.request
-import urllib.error
-import threading
 from datetime import datetime, date
 
 import pandas as pd
-from flask import Flask, render_template, request, Response, send_file, jsonify
+from flask import Flask, render_template, request, Response, send_file
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -35,71 +30,6 @@ app = Flask(__name__)
 SNAPSHOTS_DIR = "snapshots"
 LEGACY_EXCEL = "AGRISTACK.xlsx"
 REFERENCE_PATH = "reference.xlsx"
-
-# === Pending villages progress (manual completion tracking) ===
-# Requires GITHUB_TOKEN + GITHUB_REPO env vars to persist across Render restarts.
-# On each mark/unmark, we write the updated JSON to GitHub via API.
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "peerzadaobaid/agristack-bandipora").strip()
-GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
-COMPLETION_PASSWORD = os.environ.get("COMPLETION_PASSWORD", "Peerzada@1674")
-# Developer options password — hardcoded per user request. Unlocks editing
-# controls on the Pending villages progress view.
-DEVELOPER_PASSWORD = "1234@"
-COMPLETED_FILE_PATH = "completed_villages.json"
-EXPECTED_DATES_FILE_PATH = "expected_dates.json"
-BUCKET_STATUS_FILE_PATH = "bucket_status.json"
-# Bucket status stages. Dict on GitHub is {"TEHSIL|Village": "code", ...}
-# where code is one of these keys. Labels are what the user sees.
-BUCKET_STATUS_LABELS = {
-    "bucketed": "Bucketed",
-    "submitted": "Submitted for Bucketing",
-    "completed": "Completed but not submitted/bucketed",
-}
-BUCKET_STATUS_CODES = set(BUCKET_STATUS_LABELS.keys())
-
-# In-memory cache of the completed list to avoid hitting GitHub on every request.
-_completed_cache = {
-    "list": None,   # None means "not fetched yet"
-    "sha": None,
-    "lock": threading.Lock(),
-}
-
-# In-memory cache of the expected-dates map.
-_expected_dates_cache = {
-    "data": None,   # None means "not fetched yet"
-    "sha": None,
-    "lock": threading.Lock(),
-}
-
-# In-memory cache of the bucket-status map.
-_bucket_status_cache = {
-    "data": None,   # None means "not fetched yet"
-    "sha": None,
-    "lock": threading.Lock(),
-}
-
-
-def has_completion_feature():
-    """Return True if the completion feature is configured (GitHub token set)."""
-    return bool(GITHUB_TOKEN and GITHUB_REPO)
-# Common misspellings and variants we tolerate as fallbacks so the app doesn't
-# fail if the file is renamed slightly. The primary name is checked first.
-REFERENCE_FALLBACK_NAMES = [
-    "reference.xlsx",
-    "refrence.xlsx",   # very common misspelling
-    "Reference.xlsx",
-    "REFERENCE.xlsx",
-]
-
-
-def _find_reference_path():
-    """Return the actual filename of the reference file at repo root, or None
-    if no candidate exists."""
-    for name in REFERENCE_FALLBACK_NAMES:
-        if os.path.exists(name):
-            return name
-    return None
 
 # Target Based view configuration
 DEADLINE_DATE = date(2026, 9, 30)          # District-wide plan deadline
@@ -271,447 +201,6 @@ def _is_report_format(df_columns):
 
 _reference_cache = {}
 _plan_cache = {}
-
-
-def _github_api_call(method, path, body=None, timeout=15):
-    """Make an authenticated GitHub API call. Returns parsed JSON response
-    and HTTP status. Raises on non-2xx responses (except 404 for GET, which
-    returns (None, 404)). Handles missing token gracefully."""
-    if not GITHUB_TOKEN:
-        raise RuntimeError("GITHUB_TOKEN not configured — cannot contact GitHub API")
-    url = f"https://api.github.com{path}"
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "agristack-bandipora-completion",
-    }
-    data = None
-    if body is not None:
-        data = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body_bytes = resp.read()
-            return (json.loads(body_bytes.decode("utf-8")) if body_bytes else None), resp.status
-    except urllib.error.HTTPError as e:
-        if e.code == 404 and method == "GET":
-            return None, 404
-        err_body = ""
-        try:
-            err_body = e.read().decode("utf-8")
-        except Exception:
-            pass
-        raise RuntimeError(f"GitHub API {method} {path} → HTTP {e.code}: {err_body[:300]}") from e
-
-
-def _github_read_completed_file():
-    """Read completed_villages.json from GitHub. Returns (list, sha) or ([], None)."""
-    if not has_completion_feature():
-        return [], None
-    resp, status = _github_api_call(
-        "GET",
-        f"/repos/{GITHUB_REPO}/contents/{COMPLETED_FILE_PATH}?ref={GITHUB_BRANCH}",
-    )
-    if status == 404 or resp is None:
-        return [], None
-    try:
-        raw = base64.b64decode(resp["content"]).decode("utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, list):
-            return [], resp.get("sha")
-        # Normalize entries — expect [{tehsil, village}, ...]
-        cleaned = []
-        for entry in data:
-            if isinstance(entry, dict) and "tehsil" in entry and "village" in entry:
-                cleaned.append({
-                    "tehsil": str(entry["tehsil"]).strip().upper(),
-                    "village": str(entry["village"]).strip(),
-                })
-        return cleaned, resp["sha"]
-    except (ValueError, KeyError) as e:
-        print(f"[completed] failed to parse existing file: {e}", file=sys.stderr)
-        return [], resp.get("sha")
-
-
-def _github_write_completed_file(new_list, sha, commit_message):
-    """Write completed_villages.json to GitHub. sha=None creates the file for the
-    first time; otherwise it's an update. Returns the new SHA."""
-    content = json.dumps(new_list, indent=2, ensure_ascii=False)
-    body = {
-        "message": commit_message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        body["sha"] = sha
-    resp, status = _github_api_call(
-        "PUT",
-        f"/repos/{GITHUB_REPO}/contents/{COMPLETED_FILE_PATH}",
-        body=body,
-    )
-    return resp["content"]["sha"] if resp and "content" in resp else None
-
-
-def load_completed_villages(force_refresh=False):
-    """Return the current list of completed villages [{tehsil, village}, ...].
-    Cached in memory; force_refresh bypasses the cache."""
-    if not has_completion_feature():
-        return []
-    with _completed_cache["lock"]:
-        if _completed_cache["list"] is not None and not force_refresh:
-            return list(_completed_cache["list"])
-        try:
-            lst, sha = _github_read_completed_file()
-            _completed_cache["list"] = lst
-            _completed_cache["sha"] = sha
-            return list(lst)
-        except Exception as e:
-            print(f"[completed] load failed: {e}", file=sys.stderr)
-            # Fall back to empty list rather than crashing the whole page
-            if _completed_cache["list"] is None:
-                _completed_cache["list"] = []
-            return list(_completed_cache["list"])
-
-
-def _mutate_completed_batch(action, villages_list):
-    """Mark or un-mark multiple (tehsil, village) pairs in a single GitHub commit.
-    `villages_list` is a list of {tehsil, village} dicts (already normalized:
-    tehsil uppercased, both stripped). `action` is 'mark' or 'unmark'."""
-    if not villages_list:
-        return {"changed": 0, "skipped": 0}
-    with _completed_cache["lock"]:
-        for attempt in range(3):
-            if attempt == 0 and _completed_cache["list"] is not None:
-                current = list(_completed_cache["list"])
-                sha = _completed_cache["sha"]
-            else:
-                current, sha = _github_read_completed_file()
-                _completed_cache["list"] = current
-                _completed_cache["sha"] = sha
-
-            def is_in(lst, tehsil, village):
-                return any(e["tehsil"] == tehsil and e["village"] == village for e in lst)
-
-            new_list = list(current)
-            changed = []
-            skipped = 0
-            for v in villages_list:
-                tehsil, village = v["tehsil"], v["village"]
-                present = is_in(new_list, tehsil, village)
-                if action == "mark":
-                    if present:
-                        skipped += 1
-                        continue
-                    new_list.append({"tehsil": tehsil, "village": village})
-                    changed.append(v)
-                else:
-                    if not present:
-                        skipped += 1
-                        continue
-                    new_list = [e for e in new_list if not (e["tehsil"] == tehsil and e["village"] == village)]
-                    changed.append(v)
-
-            if not changed:
-                return {"changed": 0, "skipped": skipped}
-
-            # Build a helpful commit message
-            if action == "mark":
-                verb = "Mark"
-                tense = "as completed"
-            else:
-                verb = "Restore"
-                tense = "as pending"
-            if len(changed) == 1:
-                c = changed[0]
-                msg = f"{verb} {c['village']} ({c['tehsil']}) {tense}"
-            else:
-                names = ", ".join(f"{c['village']} ({c['tehsil']})" for c in changed[:5])
-                more = f" and {len(changed) - 5} more" if len(changed) > 5 else ""
-                msg = f"{verb} {len(changed)} villages {tense}: {names}{more}"
-
-            try:
-                new_sha = _github_write_completed_file(new_list, sha, msg)
-                _completed_cache["list"] = new_list
-                _completed_cache["sha"] = new_sha
-                return {"changed": len(changed), "skipped": skipped}
-            except RuntimeError as e:
-                msg_lower = str(e).lower()
-                if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
-                    print(f"[completed] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
-                    continue
-                raise
-        raise RuntimeError("Failed to persist completion change after 3 attempts")
-
-
-def _mutate_completed(action, tehsil, village):
-    """Single-village convenience wrapper around _mutate_completed_batch."""
-    tehsil = str(tehsil).strip().upper()
-    village = str(village).strip()
-    if not tehsil or not village:
-        raise ValueError("Missing tehsil or village")
-    return _mutate_completed_batch(action, [{"tehsil": tehsil, "village": village}])
-
-
-# === Expected dates (per-village target date) — stored in expected_dates.json ===
-# Structure on GitHub: { "TEHSIL|Village": "YYYY-MM-DD", ... }
-# A missing key means "no target date set". Setting date=null clears the entry.
-
-def _github_read_expected_dates_file():
-    """Read expected_dates.json from GitHub. Returns (dict, sha) or ({}, None)."""
-    if not has_completion_feature():
-        return {}, None
-    resp, status = _github_api_call(
-        "GET",
-        f"/repos/{GITHUB_REPO}/contents/{EXPECTED_DATES_FILE_PATH}?ref={GITHUB_BRANCH}",
-    )
-    if status == 404 or resp is None:
-        return {}, None
-    try:
-        raw = base64.b64decode(resp["content"]).decode("utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}, resp.get("sha")
-        # Validate and normalize entries: keys must contain "|", values must be YYYY-MM-DD
-        cleaned = {}
-        for k, v in data.items():
-            if not isinstance(k, str) or "|" not in k or not isinstance(v, str):
-                continue
-            try:
-                datetime.strptime(v, "%Y-%m-%d")
-                cleaned[k] = v
-            except ValueError:
-                continue
-        return cleaned, resp["sha"]
-    except (ValueError, KeyError) as e:
-        print(f"[expected-dates] failed to parse existing file: {e}", file=sys.stderr)
-        return {}, resp.get("sha")
-
-
-def _github_write_expected_dates_file(new_dict, sha, commit_message):
-    """Write expected_dates.json to GitHub. Returns new SHA."""
-    content = json.dumps(new_dict, indent=2, ensure_ascii=False, sort_keys=True)
-    body = {
-        "message": commit_message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        body["sha"] = sha
-    resp, status = _github_api_call(
-        "PUT",
-        f"/repos/{GITHUB_REPO}/contents/{EXPECTED_DATES_FILE_PATH}",
-        body=body,
-    )
-    return resp["content"]["sha"] if resp and "content" in resp else None
-
-
-def load_expected_dates(force_refresh=False):
-    """Return {'TEHSIL|Village': 'YYYY-MM-DD'} dict of expected dates."""
-    if not has_completion_feature():
-        return {}
-    with _expected_dates_cache["lock"]:
-        if _expected_dates_cache["data"] is not None and not force_refresh:
-            return dict(_expected_dates_cache["data"])
-        try:
-            data, sha = _github_read_expected_dates_file()
-            _expected_dates_cache["data"] = data
-            _expected_dates_cache["sha"] = sha
-            return dict(data)
-        except Exception as e:
-            print(f"[expected-dates] load failed: {e}", file=sys.stderr)
-            if _expected_dates_cache["data"] is None:
-                _expected_dates_cache["data"] = {}
-            return dict(_expected_dates_cache["data"])
-
-
-def _set_expected_dates_batch(changes):
-    """Apply date changes (list of {tehsil, village, date}) in ONE GitHub commit.
-    date=None or "" means 'clear the date' (remove key from dict)."""
-    if not changes:
-        return {"changed": 0}
-    with _expected_dates_cache["lock"]:
-        for attempt in range(3):
-            if attempt == 0 and _expected_dates_cache["data"] is not None:
-                current = dict(_expected_dates_cache["data"])
-                sha = _expected_dates_cache["sha"]
-            else:
-                current, sha = _github_read_expected_dates_file()
-                _expected_dates_cache["data"] = current
-                _expected_dates_cache["sha"] = sha
-
-            new_dict = dict(current)
-            actual_changes = []
-            for c in changes:
-                key = f"{c['tehsil']}|{c['village']}"
-                new_date = c.get("date")
-                if new_date:
-                    # Validate YYYY-MM-DD
-                    try:
-                        datetime.strptime(new_date, "%Y-%m-%d")
-                    except ValueError:
-                        raise ValueError(
-                            f"Invalid date '{new_date}' for {c['village']} — expected YYYY-MM-DD"
-                        )
-                    if new_dict.get(key) != new_date:
-                        new_dict[key] = new_date
-                        actual_changes.append(c)
-                else:
-                    if key in new_dict:
-                        del new_dict[key]
-                        actual_changes.append({**c, "date": None})
-
-            if not actual_changes:
-                return {"changed": 0}
-
-            # Commit message
-            if len(actual_changes) == 1:
-                c = actual_changes[0]
-                if c.get("date"):
-                    msg = f"Set target date for {c['village']} ({c['tehsil']}) to {c['date']}"
-                else:
-                    msg = f"Clear target date for {c['village']} ({c['tehsil']})"
-            else:
-                msg = f"Update target dates for {len(actual_changes)} villages"
-
-            try:
-                new_sha = _github_write_expected_dates_file(new_dict, sha, msg)
-                _expected_dates_cache["data"] = new_dict
-                _expected_dates_cache["sha"] = new_sha
-                return {"changed": len(actual_changes)}
-            except RuntimeError as e:
-                msg_lower = str(e).lower()
-                if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
-                    print(f"[expected-dates] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
-                    continue
-                raise
-        raise RuntimeError("Failed to persist date changes after 3 attempts")
-
-
-# === Bucket status (per-village post-completion tracking) — stored in bucket_status.json ===
-# Structure on GitHub: { "TEHSIL|Village": "bucketed"|"submitted"|"completed", ... }
-
-def _github_read_bucket_status_file():
-    """Read bucket_status.json from GitHub. Returns (dict, sha) or ({}, None)."""
-    if not has_completion_feature():
-        return {}, None
-    resp, status = _github_api_call(
-        "GET",
-        f"/repos/{GITHUB_REPO}/contents/{BUCKET_STATUS_FILE_PATH}?ref={GITHUB_BRANCH}",
-    )
-    if status == 404 or resp is None:
-        return {}, None
-    try:
-        raw = base64.b64decode(resp["content"]).decode("utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}, resp.get("sha")
-        cleaned = {}
-        for k, v in data.items():
-            if not isinstance(k, str) or "|" not in k or not isinstance(v, str):
-                continue
-            if v in BUCKET_STATUS_CODES:
-                cleaned[k] = v
-        return cleaned, resp["sha"]
-    except (ValueError, KeyError) as e:
-        print(f"[bucket-status] failed to parse existing file: {e}", file=sys.stderr)
-        return {}, resp.get("sha")
-
-
-def _github_write_bucket_status_file(new_dict, sha, commit_message):
-    """Write bucket_status.json to GitHub. Returns new SHA."""
-    content = json.dumps(new_dict, indent=2, ensure_ascii=False, sort_keys=True)
-    body = {
-        "message": commit_message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        body["sha"] = sha
-    resp, status = _github_api_call(
-        "PUT",
-        f"/repos/{GITHUB_REPO}/contents/{BUCKET_STATUS_FILE_PATH}",
-        body=body,
-    )
-    return resp["content"]["sha"] if resp and "content" in resp else None
-
-
-def load_bucket_status(force_refresh=False):
-    """Return {'TEHSIL|Village': 'code'} dict of bucket statuses."""
-    if not has_completion_feature():
-        return {}
-    with _bucket_status_cache["lock"]:
-        if _bucket_status_cache["data"] is not None and not force_refresh:
-            return dict(_bucket_status_cache["data"])
-        try:
-            data, sha = _github_read_bucket_status_file()
-            _bucket_status_cache["data"] = data
-            _bucket_status_cache["sha"] = sha
-            return dict(data)
-        except Exception as e:
-            print(f"[bucket-status] load failed: {e}", file=sys.stderr)
-            if _bucket_status_cache["data"] is None:
-                _bucket_status_cache["data"] = {}
-            return dict(_bucket_status_cache["data"])
-
-
-def _set_bucket_status_batch(changes):
-    """Apply bucket-status changes in ONE GitHub commit. `changes` is a list of
-    {tehsil, village, status} where status is a code from BUCKET_STATUS_CODES or
-    None/'' to clear."""
-    if not changes:
-        return {"changed": 0}
-    with _bucket_status_cache["lock"]:
-        for attempt in range(3):
-            if attempt == 0 and _bucket_status_cache["data"] is not None:
-                current = dict(_bucket_status_cache["data"])
-                sha = _bucket_status_cache["sha"]
-            else:
-                current, sha = _github_read_bucket_status_file()
-                _bucket_status_cache["data"] = current
-                _bucket_status_cache["sha"] = sha
-
-            new_dict = dict(current)
-            actual_changes = []
-            for c in changes:
-                key = f"{c['tehsil']}|{c['village']}"
-                new_status = c.get("status") or None
-                if new_status:
-                    if new_status not in BUCKET_STATUS_CODES:
-                        raise ValueError(
-                            f"Invalid bucket status '{new_status}' — expected one of {sorted(BUCKET_STATUS_CODES)}"
-                        )
-                    if new_dict.get(key) != new_status:
-                        new_dict[key] = new_status
-                        actual_changes.append(c)
-                else:
-                    if key in new_dict:
-                        del new_dict[key]
-                        actual_changes.append({**c, "status": None})
-
-            if not actual_changes:
-                return {"changed": 0}
-
-            if len(actual_changes) == 1:
-                c = actual_changes[0]
-                label = BUCKET_STATUS_LABELS.get(c.get("status"), "cleared") if c.get("status") else "cleared"
-                msg = f"Set bucket status for {c['village']} ({c['tehsil']}): {label}"
-            else:
-                msg = f"Update bucket status for {len(actual_changes)} villages"
-
-            try:
-                new_sha = _github_write_bucket_status_file(new_dict, sha, msg)
-                _bucket_status_cache["data"] = new_dict
-                _bucket_status_cache["sha"] = new_sha
-                return {"changed": len(actual_changes)}
-            except RuntimeError as e:
-                msg_lower = str(e).lower()
-                if ("409" in msg_lower or "does not match" in msg_lower or "422" in msg_lower) and attempt < 2:
-                    print(f"[bucket-status] SHA conflict on attempt {attempt+1}, refetching...", file=sys.stderr)
-                    continue
-                raise
-        raise RuntimeError("Failed to persist bucket-status changes after 3 attempts")
 
 
 def has_plan_file():
@@ -889,30 +378,20 @@ def find_baseline_snapshot(snapshots, target_date=BASELINE_TARGET_DATE, current_
 
 
 def load_reference():
-    """Read the reference file (reference.xlsx or a known misspelling) and
-    return a DataFrame with static columns: tehsil, village, patwari, checker,
-    khasras. Returns None if no reference file exists. Cache is keyed on the
-    file's mtime so live edits invalidate."""
-    ref_path = _find_reference_path()
-    if ref_path is None:
+    """Read reference.xlsx and return a DataFrame with static columns:
+    tehsil, village, patwari, checker, khasras. Returns None if no reference
+    file exists. Cache is keyed on file mtime so live edits invalidate."""
+    if not os.path.exists(REFERENCE_PATH):
         return None
-    mtime = os.path.getmtime(ref_path)
-    cache_key = (ref_path, mtime)
+    mtime = os.path.getmtime(REFERENCE_PATH)
+    cache_key = (REFERENCE_PATH, mtime)
     if cache_key in _reference_cache:
         return _reference_cache[cache_key]
-    xl = pd.ExcelFile(ref_path)
+    xl = pd.ExcelFile(REFERENCE_PATH)
     sheet = _pick_sheet(xl)
     df = pd.read_excel(xl, sheet_name=sheet)
     cols = _detect_columns(df)
-    missing = [c for c in ("tehsil", "village", "patwari", "khasras") if c not in cols]
-    if missing:
-        raise RuntimeError(
-            f"{ref_path} is missing required columns: {missing}. "
-            f"Found columns in sheet {sheet!r}: {df.columns.tolist()}. "
-            f"Detected mapping: {cols}. "
-            f"Please make sure the reference file has columns for TEHSIL, VILLAGE, "
-            f"CONCERNED PATWARI, and TOTAL KHASRAS (variants of these names also work)."
-        )
+    # Extract only the static columns needed for merge
     result = pd.DataFrame({
         "tehsil": df[cols["tehsil"]].astype(str).str.strip().str.upper(),
         "village": df[cols["village"]].astype(str).str.strip(),
@@ -921,7 +400,7 @@ def load_reference():
         "checker": df[cols["checker"]].astype(str).str.strip().replace({"nan": "", "None": ""}) if "checker" in cols else "",
     })
     result = result[(result["village"] != "") & (result["village"].str.lower() != "nan")]
-    print(f"[reference] Loaded {len(result)} villages from {ref_path}", file=sys.stderr)
+    print(f"[reference] Loaded {len(result)} villages from {REFERENCE_PATH}", file=sys.stderr)
     _reference_cache[cache_key] = result
     return result
 
@@ -933,9 +412,8 @@ def _load_report_and_merge(path):
     if ref is None:
         raise RuntimeError(
             f"Snapshot '{os.path.basename(path)}' is in REPORT format (no patwari/khasras "
-            f"columns) but no reference file was found at repo root. Please upload "
-            f"reference.xlsx (or refrence.xlsx / Reference.xlsx — spelling variants accepted) "
-            f"containing tehsil, village, patwari, checker, and TOTAL KHASRAS."
+            f"columns) but no reference.xlsx was found in the repo root. Please upload "
+            f"reference.xlsx containing tehsil, village, patwari, checker, and TOTAL KHASRAS."
         )
     xl = pd.ExcelFile(path)
     sheet = _pick_sheet(xl)
@@ -1718,203 +1196,59 @@ def index():
     if not snapshots:
         return "No snapshots found. Add a file to snapshots/ folder.", 500
 
-    # Mode: 'default' (current view) or 'pending' (Pending villages progress view).
-    # 'target' is accepted as an alias for 'pending' for backward compat.
-    raw_mode = request.args.get("mode", "default").strip().lower()
-    if raw_mode in ("pending", "target"):
-        mode = "pending"
-    else:
+    # Mode: 'default' (current view) or 'target' (target based view)
+    mode = request.args.get("mode", "default").strip().lower()
+    if mode not in ("default", "target"):
         mode = "default"
 
     from_date, to_date = resolve_dates(snapshots, request.args.get("from"), request.args.get("to"))
     current_df = load_snapshot(snapshot_for_date(snapshots, to_date))
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
     tehsils_filter = parse_tehsils_param(request.args)
-
-    # Completion feature (Pending villages progress) — cheap availability check
-    # so the toggle can render even when we're not in pending mode.
-    completion_available = has_completion_feature()
-    completed_list = []
-    completed_display = []  # for template dropdown
-    expected_dates_map = {}
-    bucket_status_map = {}
-    # Snapshot of per-tehsil village counts BEFORE the pending filter — used
-    # to render "Total Villages" alongside "Pending Villages".
-    total_villages_per_tehsil = {}
-    grand_total_villages = 0
-    # Reference to unfiltered df for bucket status (which needs completed villages' data too)
-    _unfiltered_current_df = None
-
-    if mode == "pending" and completion_available:
-        try:
-            completed_list = load_completed_villages()
-        except Exception as e:
-            print(f"[pending] Failed to load completed list: {e}", file=sys.stderr)
-            completed_list = []
-        try:
-            expected_dates_map = load_expected_dates()
-        except Exception as e:
-            print(f"[pending] Failed to load expected dates: {e}", file=sys.stderr)
-            expected_dates_map = {}
-        try:
-            bucket_status_map = load_bucket_status()
-        except Exception as e:
-            print(f"[pending] Failed to load bucket status: {e}", file=sys.stderr)
-            bucket_status_map = {}
-
-        # Capture pre-filter counts first (uppercased tehsil for consistent lookup)
-        tehsil_upper = current_df["tehsil"].astype(str).str.upper()
-        total_villages_per_tehsil = (
-            current_df.assign(_t=tehsil_upper)
-                      .drop_duplicates(subset=["_t", "village"])
-                      .groupby("_t")
-                      .size()
-                      .to_dict()
-        )
-        grand_total_villages = int(sum(total_villages_per_tehsil.values()))
-
-        # Keep unfiltered df around for the Bucket Status page (needs data on
-        # completed villages, which are about to be filtered out).
-        _unfiltered_current_df = current_df
-
-        # Filter both current and prior snapshot DataFrames to exclude completed
-        # villages. Everything downstream (tehsil rows, village rows, Additions,
-        # totals) then automatically reflects only pending villages.
-        completed_set = {(cv["tehsil"], cv["village"]) for cv in completed_list}
-        if completed_set:
-            def _is_pending(df):
-                key = df["tehsil"].str.upper().astype(str) + "|" + df["village"].astype(str)
-                excluded = {f"{t}|{v}" for t, v in completed_set}
-                return df[~key.isin(excluded)].copy()
-            current_df = _is_pending(current_df)
-            if from_df is not None:
-                from_df = _is_pending(from_df)
-
-        # Sorted list of {tehsil, village} for the "restore" dropdown
-        completed_display = sorted(completed_list, key=lambda x: (x["tehsil"], x["village"]))
-
     views = build_views(current_df, from_df, tehsils_filter)
 
-    # In pending mode: decorate rows and build bucket-status views.
-    bucket_status_rows = []
-    bucket_summary_rows = []
-    bucket_grand = {"pending": 0, "completed_only": 0, "submitted": 0, "bucketed": 0, "total": 0}
-    if mode == "pending" and completion_available:
-        # Decorate village rows with expected_date + days_remaining
-        for row in views.get("village_rows", []):
-            key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
-            iso_date = expected_dates_map.get(key)
-            row["expected_date"] = iso_date
-            if iso_date:
-                try:
-                    exp = datetime.strptime(iso_date, "%Y-%m-%d").date()
-                    row["days_remaining"] = (exp - to_date).days
-                except ValueError:
-                    row["days_remaining"] = None
-            else:
-                row["days_remaining"] = None
-
-        # Decorate tehsil rows with total_villages
-        for row in views.get("tehsil_rows", []):
-            row["total_villages"] = total_villages_per_tehsil.get(
-                str(row["tehsil"]).upper(), row.get("villages", 0)
-            )
-            row["is_done"] = False
-
-        # Fully-done tehsils: appear in unfiltered df but not in filtered tehsil_rows
-        active_tehsils_upper = {str(r["tehsil"]).upper() for r in views.get("tehsil_rows", [])}
-        fully_done_upper = set(total_villages_per_tehsil.keys()) - active_tehsils_upper
-        done_rows = []
-        for t_upper in sorted(fully_done_upper):
-            done_rows.append({
-                "tehsil": t_upper,
-                "total_villages": total_villages_per_tehsil[t_upper],
-                "villages": 0,       # all done — 0 pending
-                "total": 0, "submitted": 0, "pct": 0.0, "pct_approved": 0.0,
-                "is_done": True,
-            })
-        # Append fully-done rows at bottom of tehsil table
-        views["tehsil_rows"] = list(views["tehsil_rows"]) + done_rows
-
-        # === Bucket Status page: villages that are (a) marked complete or
-        # (b) have an explicit bucket status. Villages still pending (not yet
-        # marked complete and no bucket status) do NOT appear here.
-        completed_keys = {f"{cv['tehsil']}|{cv['village']}" for cv in completed_list}
-        bucket_keys = set(bucket_status_map.keys())
-        on_bucket_page = completed_keys | bucket_keys
-
-        # Village → total_khasras lookup from the UNFILTERED df
-        # (completed villages have been filtered out of current_df by now).
+    # Only touch the plan file when the user actually wants the target view.
+    # In default mode we do a cheap filesystem check so the toggle can render,
+    # but we don't spend memory parsing the Excel.
+    plan_available = has_plan_file()
+    target_view = None
+    baseline_info = None
+    if mode == "target" and plan_available:
         try:
-            df_lookup = _unfiltered_current_df.copy()
-            df_lookup["_key"] = df_lookup["tehsil"].astype(str).str.upper() + "|" + df_lookup["village"].astype(str)
-            df_lookup = df_lookup.drop_duplicates("_key").set_index("_key")
+            plan_data = load_plan_file()
         except Exception as e:
-            print(f"[pending] Failed to build village lookup: {e}", file=sys.stderr)
-            df_lookup = None
-
-        for key in on_bucket_page:
-            # Get canonical tehsil, village, total_khasras
-            if df_lookup is not None and key in df_lookup.index:
-                r = df_lookup.loc[key]
-                tehsil = str(r["tehsil"]).upper()
-                village = str(r["village"])
+            print(f"[target-view] Failed to load plan file: {e}", file=sys.stderr)
+            plan_data = None
+        if plan_data is not None:
+            baseline = find_baseline_snapshot(snapshots, BASELINE_TARGET_DATE, current_date=to_date)
+            baseline_df = None
+            baseline_snapshot_date = None
+            if baseline:
+                b_date, b_path = baseline
+                baseline_snapshot_date = b_date
                 try:
-                    total = int(r["total_khasras"]) if pd.notna(r["total_khasras"]) else 0
-                except Exception:
-                    total = 0
-            else:
-                # Fallback if a completed village isn't in the current snapshot for any reason
-                t, v = key.split("|", 1)
-                tehsil, village, total = t, v, 0
-
-            # Determine effective status
-            explicit = bucket_status_map.get(key)
-            if explicit and explicit in BUCKET_STATUS_CODES:
-                status_code = explicit
-            elif key in completed_keys:
-                # Default for completed villages without an explicit status
-                status_code = "completed"
-            else:
-                status_code = None
-
-            bucket_status_rows.append({
-                "tehsil": tehsil,
-                "village": village,
-                "total": total,
-                "status_code": status_code or "",
-                "status_label": BUCKET_STATUS_LABELS.get(status_code, "—") if status_code else "—",
-            })
-
-        bucket_status_rows.sort(key=lambda x: (x["tehsil"], x["village"]))
-
-        # === Bucket Summary page: per-tehsil counts of each status.
-        # Every tehsil appears (even if entirely pending or entirely bucketed).
-        from collections import defaultdict as _dd
-        counts_by_tehsil = _dd(lambda: {"bucketed": 0, "submitted": 0, "completed": 0})
-        for row in bucket_status_rows:
-            code = row["status_code"]
-            if code in counts_by_tehsil[row["tehsil"]]:
-                counts_by_tehsil[row["tehsil"]][code] += 1
-
-        for t_upper in sorted(total_villages_per_tehsil.keys()):
-            total_v = total_villages_per_tehsil[t_upper]
-            c = counts_by_tehsil.get(t_upper, {"bucketed": 0, "submitted": 0, "completed": 0})
-            completed_total = c["bucketed"] + c["submitted"] + c["completed"]
-            pending = total_v - completed_total
-            bucket_summary_rows.append({
-                "tehsil": t_upper,
-                "total_villages": total_v,
-                "pending": pending,
-                "completed_only": c["completed"],
-                "submitted": c["submitted"],
-                "bucketed": c["bucketed"],
-            })
-            bucket_grand["pending"] += pending
-            bucket_grand["completed_only"] += c["completed"]
-            bucket_grand["submitted"] += c["submitted"]
-            bucket_grand["bucketed"] += c["bucketed"]
-            bucket_grand["total"] += total_v
+                    baseline_df = load_snapshot(b_path)
+                    baseline_info = {"date": b_date, "path": os.path.basename(b_path)}
+                except Exception as e:
+                    print(f"[target-view] Could not load baseline {b_path}: {e}", file=sys.stderr)
+            try:
+                # Walk through every snapshot between baseline and current to
+                # compute the patwari daily averages transparently (handles
+                # non-monotonic data, sparse snapshots, etc.)
+                patwari_daily_avgs = compute_patwari_daily_avg(
+                    snapshots, baseline_snapshot_date, to_date
+                )
+                target_view = build_target_view(
+                    current_df, baseline_df, plan_data,
+                    today=to_date, baseline_date=baseline_snapshot_date,
+                    patwari_daily_avgs=patwari_daily_avgs,
+                )
+            except Exception as e:
+                print(f"[target-view] build_target_view failed: {e}", file=sys.stderr)
+                target_view = None
+            # Free heavy references before template render
+            baseline_df = None
+            import gc; gc.collect()
 
     override = read_as_of_override()
     as_of_display = override if override else format_date(to_date)
@@ -1938,173 +1272,12 @@ def index():
         selected_tehsils=selected_tehsils,
         coloring_active=(tehsils_filter is not None),
         mode=mode,
-        completion_available=completion_available,
-        completed_display=completed_display,
-        completed_count=len(completed_list),
-        grand_total_villages=grand_total_villages,
-        bucket_status_rows=bucket_status_rows,
-        bucket_summary_rows=bucket_summary_rows,
-        bucket_grand=bucket_grand,
-        bucket_status_labels=BUCKET_STATUS_LABELS,
+        plan_available=plan_available,
+        target_view=target_view,
+        baseline_info=baseline_info,
+        target_deadline=DEADLINE_DATE,
         **views,
     )
-
-
-@app.route("/api/set-bucket-status", methods=["POST"])
-def set_bucket_status():
-    """Batch-set bucket status for villages. Requires password.
-    Body: {password, changes: [{tehsil, village, status}]}. status=null clears."""
-    if not has_completion_feature():
-        return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
-    data = request.get_json(silent=True) or {}
-    password = data.get("password", "")
-    raw_changes = data.get("changes")
-
-    if password != COMPLETION_PASSWORD:
-        return jsonify({"error": "Wrong password."}), 401
-    if not isinstance(raw_changes, list) or not raw_changes:
-        return jsonify({"error": "changes must be a non-empty list."}), 400
-    if len(raw_changes) > 200:
-        return jsonify({"error": "Too many changes in one request (max 200)."}), 400
-
-    normalized = []
-    for c in raw_changes:
-        if not isinstance(c, dict):
-            return jsonify({"error": "each change must be an object with tehsil, village, status."}), 400
-        t = str(c.get("tehsil", "")).strip().upper()
-        v = str(c.get("village", "")).strip()
-        s = c.get("status")
-        if s is not None:
-            s = str(s).strip() or None
-        if not t or not v:
-            return jsonify({"error": "each change needs non-empty tehsil and village."}), 400
-        if s is not None and s not in BUCKET_STATUS_CODES:
-            return jsonify({"error": f"invalid status '{s}' — must be one of {sorted(BUCKET_STATUS_CODES)}"}), 400
-        normalized.append({"tehsil": t, "village": v, "status": s})
-
-    try:
-        result = _set_bucket_status_batch(normalized)
-        return jsonify({
-            "success": True,
-            "requested": len(normalized),
-            "changed": result["changed"],
-        })
-    except Exception as e:
-        print(f"[set-bucket-status] failed: {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/dev-unlock", methods=["POST"])
-def dev_unlock():
-    """Verify the developer password. On success returns the completion password
-    so the frontend can silently include it in subsequent mark-complete /
-    set-dates calls without prompting the user again. Session-only, browser tab
-    scope — the frontend stores it in sessionStorage."""
-    data = request.get_json(silent=True) or {}
-    password = data.get("password", "")
-    if password != DEVELOPER_PASSWORD:
-        return jsonify({"error": "Wrong developer password."}), 401
-    return jsonify({"success": True, "api_key": COMPLETION_PASSWORD})
-
-
-@app.route("/api/set-dates", methods=["POST"])
-def set_dates():
-    """Batch-set expected completion dates for villages. Requires password.
-    Body: {password, changes: [{tehsil, village, date}]}. date=null clears."""
-    if not has_completion_feature():
-        return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
-    data = request.get_json(silent=True) or {}
-    password = data.get("password", "")
-    raw_changes = data.get("changes")
-
-    if password != COMPLETION_PASSWORD:
-        return jsonify({"error": "Wrong password."}), 401
-    if not isinstance(raw_changes, list) or not raw_changes:
-        return jsonify({"error": "changes must be a non-empty list."}), 400
-    if len(raw_changes) > 200:
-        return jsonify({"error": "Too many changes in one request (max 200)."}), 400
-
-    normalized = []
-    for c in raw_changes:
-        if not isinstance(c, dict):
-            return jsonify({"error": "each change must be an object with tehsil, village, date."}), 400
-        t = str(c.get("tehsil", "")).strip().upper()
-        v = str(c.get("village", "")).strip()
-        d = c.get("date")
-        if d is not None:
-            d = str(d).strip() or None
-        if not t or not v:
-            return jsonify({"error": "each change needs non-empty tehsil and village."}), 400
-        if d is not None:
-            try:
-                datetime.strptime(d, "%Y-%m-%d")
-            except ValueError:
-                return jsonify({"error": f"invalid date '{d}' — expected YYYY-MM-DD"}), 400
-        normalized.append({"tehsil": t, "village": v, "date": d})
-
-    try:
-        result = _set_expected_dates_batch(normalized)
-        return jsonify({
-            "success": True,
-            "requested": len(normalized),
-            "changed": result["changed"],
-        })
-    except Exception as e:
-        print(f"[set-dates] failed: {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/mark-complete", methods=["POST"])
-def mark_complete():
-    """Mark or un-mark one or more villages as completed. Requires password.
-    Accepts either the single-village form ({tehsil, village}) or a batch form
-    ({villages: [{tehsil, village}, ...]}). Multiple villages become one commit."""
-    if not has_completion_feature():
-        return jsonify({"error": "Completion feature not configured. Set GITHUB_TOKEN and GITHUB_REPO env vars."}), 503
-    data = request.get_json(silent=True) or {}
-    password = data.get("password", "")
-    action = data.get("action", "mark").strip().lower()
-
-    if password != COMPLETION_PASSWORD:
-        return jsonify({"error": "Wrong password."}), 401
-    if action not in ("mark", "unmark"):
-        return jsonify({"error": "action must be 'mark' or 'unmark'."}), 400
-
-    # Prefer the batch form (villages: [...]), fall back to the single form
-    raw_villages = data.get("villages")
-    if not raw_villages:
-        tehsil = data.get("tehsil", "")
-        village = data.get("village", "")
-        if tehsil and village:
-            raw_villages = [{"tehsil": tehsil, "village": village}]
-    if not isinstance(raw_villages, list) or not raw_villages:
-        return jsonify({"error": "villages array (or tehsil+village fields) is required."}), 400
-    if len(raw_villages) > 200:
-        return jsonify({"error": "Too many villages in one request (max 200)."}), 400
-
-    # Normalize
-    normalized = []
-    for v in raw_villages:
-        if not isinstance(v, dict):
-            return jsonify({"error": "each village entry must be an object with tehsil and village."}), 400
-        t = str(v.get("tehsil", "")).strip().upper()
-        vg = str(v.get("village", "")).strip()
-        if not t or not vg:
-            return jsonify({"error": "each village entry needs non-empty tehsil and village."}), 400
-        normalized.append({"tehsil": t, "village": vg})
-
-    try:
-        result = _mutate_completed_batch(action, normalized)
-        return jsonify({
-            "success": True,
-            "action": action,
-            "requested": len(normalized),
-            "changed": result["changed"],
-            "skipped": result["skipped"],
-        })
-    except Exception as e:
-        print(f"[mark-complete] {action} of {len(normalized)} villages failed: {e}", file=sys.stderr)
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/farmer-id")
@@ -2165,7 +1338,7 @@ def _check_download_password():
     return True
 
 
-def _resolve_download_context(pending_mode=False):
+def _resolve_download_context():
     snapshots = all_snapshots()
     if not snapshots:
         return None
@@ -2173,143 +1346,9 @@ def _resolve_download_context(pending_mode=False):
     current_df = load_snapshot(snapshot_for_date(snapshots, to_date))
     from_df = load_snapshot(snapshot_for_date(snapshots, from_date)) if from_date else None
     tehsils_filter = parse_tehsils_param(request.args)
-
-    expected_dates_map = {}
-    bucket_status_map = {}
-    completed_list = []
-    total_villages_per_tehsil = {}
-    _unfiltered = None
-    if pending_mode and has_completion_feature():
-        try:
-            completed_list = load_completed_villages()
-        except Exception:
-            completed_list = []
-        try:
-            expected_dates_map = load_expected_dates()
-        except Exception:
-            expected_dates_map = {}
-        try:
-            bucket_status_map = load_bucket_status()
-        except Exception:
-            bucket_status_map = {}
-        # Capture pre-filter data
-        tehsil_upper = current_df["tehsil"].astype(str).str.upper()
-        total_villages_per_tehsil = (
-            current_df.assign(_t=tehsil_upper)
-                      .drop_duplicates(subset=["_t", "village"])
-                      .groupby("_t")
-                      .size()
-                      .to_dict()
-        )
-        _unfiltered = current_df
-        completed_set = {(cv["tehsil"], cv["village"]) for cv in completed_list}
-        if completed_set:
-            def _is_pending(df):
-                key = df["tehsil"].str.upper().astype(str) + "|" + df["village"].astype(str)
-                excluded = {f"{t}|{v}" for t, v in completed_set}
-                return df[~key.isin(excluded)].copy()
-            current_df = _is_pending(current_df)
-            if from_df is not None:
-                from_df = _is_pending(from_df)
-
     views = build_views(current_df, from_df, tehsils_filter)
-
-    bucket_status_rows = []
-    bucket_summary_rows = []
-    if pending_mode and has_completion_feature():
-        # Decorate village rows with expected_date + days_remaining
-        for row in views.get("village_rows", []):
-            key = f"{str(row['tehsil']).upper()}|{str(row['village'])}"
-            iso_date = expected_dates_map.get(key)
-            row["expected_date"] = iso_date
-            if iso_date:
-                try:
-                    exp = datetime.strptime(iso_date, "%Y-%m-%d").date()
-                    row["days_remaining"] = (exp - to_date).days
-                except ValueError:
-                    row["days_remaining"] = None
-            else:
-                row["days_remaining"] = None
-
-        # Decorate tehsil rows with total_villages + is_done marker, and add
-        # fully-done tehsils that were filtered out.
-        for row in views.get("tehsil_rows", []):
-            row["total_villages"] = total_villages_per_tehsil.get(
-                str(row["tehsil"]).upper(), row.get("villages", 0)
-            )
-            row["is_done"] = False
-        active_tehsils_upper = {str(r["tehsil"]).upper() for r in views.get("tehsil_rows", [])}
-        fully_done_upper = set(total_villages_per_tehsil.keys()) - active_tehsils_upper
-        done_rows = []
-        for t_upper in sorted(fully_done_upper):
-            done_rows.append({
-                "tehsil": t_upper,
-                "total_villages": total_villages_per_tehsil[t_upper],
-                "villages": 0, "total": 0, "submitted": 0, "pct": 0.0, "pct_approved": 0.0,
-                "additions": None, "band": None, "is_done": True,
-            })
-        views["tehsil_rows"] = list(views["tehsil_rows"]) + done_rows
-
-        # Bucket status rows
-        completed_keys = {f"{cv['tehsil']}|{cv['village']}" for cv in completed_list}
-        bucket_keys = set(bucket_status_map.keys())
-        on_bucket_page = completed_keys | bucket_keys
-        if _unfiltered is not None:
-            df_lookup = _unfiltered.copy()
-            df_lookup["_key"] = df_lookup["tehsil"].astype(str).str.upper() + "|" + df_lookup["village"].astype(str)
-            df_lookup = df_lookup.drop_duplicates("_key").set_index("_key")
-            for key in on_bucket_page:
-                if key in df_lookup.index:
-                    r = df_lookup.loc[key]
-                    tehsil = str(r["tehsil"]).upper()
-                    village = str(r["village"])
-                    try:
-                        total = int(r["total_khasras"]) if pd.notna(r["total_khasras"]) else 0
-                    except Exception:
-                        total = 0
-                else:
-                    t, v = key.split("|", 1)
-                    tehsil, village, total = t, v, 0
-                explicit = bucket_status_map.get(key)
-                if explicit and explicit in BUCKET_STATUS_CODES:
-                    status_code = explicit
-                elif key in completed_keys:
-                    status_code = "completed"
-                else:
-                    status_code = None
-                bucket_status_rows.append({
-                    "tehsil": tehsil, "village": village, "total": total,
-                    "status_code": status_code or "",
-                    "status_label": BUCKET_STATUS_LABELS.get(status_code, "—") if status_code else "—",
-                })
-            bucket_status_rows.sort(key=lambda x: (x["tehsil"], x["village"]))
-
-        # Bucket summary
-        from collections import defaultdict as _dd
-        counts_by_tehsil = _dd(lambda: {"bucketed": 0, "submitted": 0, "completed": 0})
-        for row in bucket_status_rows:
-            code = row["status_code"]
-            if code in counts_by_tehsil[row["tehsil"]]:
-                counts_by_tehsil[row["tehsil"]][code] += 1
-        for t_upper in sorted(total_villages_per_tehsil.keys()):
-            total_v = total_villages_per_tehsil[t_upper]
-            c = counts_by_tehsil.get(t_upper, {"bucketed": 0, "submitted": 0, "completed": 0})
-            completed_total = c["bucketed"] + c["submitted"] + c["completed"]
-            pending = total_v - completed_total
-            bucket_summary_rows.append({
-                "tehsil": t_upper,
-                "total_villages": total_v,
-                "pending": pending,
-                "completed_only": c["completed"],
-                "submitted": c["submitted"],
-                "bucketed": c["bucketed"],
-            })
-
     return {"views": views, "to_date": to_date, "from_date": from_date,
-            "gap_days": (to_date - from_date).days if from_date else 0,
-            "pending_mode": pending_mode,
-            "bucket_status_rows": bucket_status_rows,
-            "bucket_summary_rows": bucket_summary_rows}
+            "gap_days": (to_date - from_date).days if from_date else 0}
 
 
 def _panels_for_view(views, view_key):
@@ -2337,20 +1376,12 @@ def download():
     if not _check_download_password():
         return Response("Authentication required", 401,
                         {"WWW-Authenticate": 'Basic realm="AgriStack Download"'})
-    pending_mode = request.args.get("pending", "").strip() in ("1", "true", "yes")
-    ctx = _resolve_download_context(pending_mode=pending_mode)
+    ctx = _resolve_download_context()
     if not ctx:
         return "No snapshots found.", 500
     view_key = request.args.get("view", "all")
-    buf = _generate_workbook(
-        ctx["views"], ctx["to_date"], ctx["from_date"], view_key,
-        pending_mode=pending_mode,
-        bucket_status_rows=ctx.get("bucket_status_rows", []),
-        bucket_summary_rows=ctx.get("bucket_summary_rows", []),
-    )
+    buf = _generate_workbook(ctx["views"], ctx["to_date"], ctx["from_date"], view_key)
     tail = "" if view_key == "all" else f"_{view_key}"
-    if pending_mode:
-        tail = "_pending"
     filename = f"AGRISTACK_Dashboard_{ctx['to_date'].strftime('%Y-%m-%d')}{tail}.xlsx"
     return send_file(buf,
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2399,8 +1430,7 @@ def download_pdf():
 
 # ---------- Excel workbook ----------
 
-def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=False,
-                        bucket_status_rows=None, bucket_summary_rows=None):
+def _generate_workbook(views, to_date, from_date, view_key="all"):
     def _include(key):
         return view_key == "all" or view_key == key
 
@@ -2444,74 +1474,38 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
     # === TEHSIL WISE ===
     if _include("tehsil"):
         ws = wb.create_sheet("TEHSIL WISE")
-        headers = ["S.NO", "TEHSIL"]
-        if pending_mode:
-            headers.extend(["TOTAL VILLAGES", "PENDING VILLAGES"])
-        else:
-            headers.append("NUMBER OF VILLAGES")
-        headers.extend(["TOTAL SURVEY NOS", "SUBMITTED", "% COMPLETION"])
+        headers = ["S.NO", "TEHSIL", "NUMBER OF VILLAGES", "TOTAL SURVEY NOS",
+                   "SUBMITTED", "% COMPLETION"]
         if additions_hdr:
             headers.append(additions_hdr)
         headers.append("% APPROVED")
         write_hdr(ws, headers)
         approved_col = len(headers)
         additions_col = len(headers) - 1 if additions_hdr else None
-        vill_offset = 4 if pending_mode else 3
         for i, row in enumerate(views["tehsil_rows"], start=1):
             r = i + 1
-            vals = [i, row["tehsil"]]
-            aligns = [center, left]
-            if pending_mode:
-                vals.extend([row.get("total_villages", row["villages"]), row["villages"]])
-                aligns.extend([center, center])
-            else:
-                vals.append(row["villages"])
+            vals = [i, row["tehsil"], row["villages"], row["total"], row["submitted"], round(row["pct"], 2)]
+            aligns = [center, left, center, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
                 aligns.append(center)
-            if row.get("is_done"):
-                # Fully-done tehsil: mark as complete, don't emit numeric noise
-                vals.extend(["Complete", "Complete", "Complete"])
-                aligns.extend([center, center, center])
-                if additions_hdr:
-                    vals.append("—"); aligns.append(center)
-                vals.append("Complete"); aligns.append(center)
-            else:
-                vals.extend([row["total"], row["submitted"], round(row["pct"], 2)])
-                aligns.extend([center, center, center])
-                if additions_hdr:
-                    vals.append(row["additions"] if row["additions"] is not None else "—")
-                    aligns.append(center)
-                vals.append(round(row["pct_approved"], 2))
-                aligns.append(center)
+            vals.append(round(row["pct_approved"], 2))
+            aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
                 c.alignment = a; c.font = body_font; c.border = border
-                if pending_mode:
-                    if ci in (3, 4): c.number_format = "#,##0"
-                    if ci in (5, 6) and isinstance(v, int): c.number_format = "#,##0"
-                    if ci == 7 and isinstance(v, (int, float)): c.number_format = '0.00"%"'
-                    if additions_col and ci == additions_col and isinstance(v, int):
-                        c.number_format = "+#,##0;-#,##0;0"
-                    if ci == approved_col and isinstance(v, (int, float)): c.number_format = '0.00"%"'
-                else:
-                    if ci in (3, 4, 5): c.number_format = "#,##0"
-                    if ci == 6: c.number_format = '0.00"%"'
-                    if additions_col and ci == additions_col and isinstance(v, int):
-                        c.number_format = "+#,##0;-#,##0;0"
-                    if ci == approved_col: c.number_format = '0.00"%"'
+                if ci in (3, 4, 5): c.number_format = "#,##0"
+                if ci == 6: c.number_format = '0.00"%"'
+                if additions_col and ci == additions_col and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
+                if ci == approved_col: c.number_format = '0.00"%"'
         # TOTAL
         tt = len(views["tehsil_rows"]) + 2
-        ws.cell(row=tt, column=2, value=("TOTAL (Pending)" if pending_mode else "TOTAL")).alignment = left
-        if pending_mode:
-            # Sum total_villages column and pending villages column across tehsil_rows
-            total_v = sum(r.get("total_villages", r["villages"]) for r in views["tehsil_rows"])
-            pending_v = sum(r["villages"] for r in views["tehsil_rows"])
-            ws.cell(row=tt, column=3, value=total_v).alignment = center
-            ws.cell(row=tt, column=4, value=pending_v).alignment = center
-        else:
-            ws.cell(row=tt, column=3, value=grand["villages"]).alignment = center
-        ws.cell(row=tt, column=vill_offset + 1, value=grand["total_khasras"]).alignment = center
-        ws.cell(row=tt, column=vill_offset + 2, value=grand["submitted"]).alignment = center
-        ws.cell(row=tt, column=vill_offset + 3, value=round(grand["overall_pct"], 2)).alignment = center
+        ws.cell(row=tt, column=2, value="TOTAL").alignment = left
+        ws.cell(row=tt, column=3, value=grand["villages"]).alignment = center
+        ws.cell(row=tt, column=4, value=grand["total_khasras"]).alignment = center
+        ws.cell(row=tt, column=5, value=grand["submitted"]).alignment = center
+        ws.cell(row=tt, column=6, value=round(grand["overall_pct"], 2)).alignment = center
         if additions_col:
             ws.cell(row=tt, column=additions_col, value=grand["additions"] if grand["additions"] is not None else "—").alignment = center
         ws.cell(row=tt, column=approved_col, value=round(grand["overall_pct_approved"], 2)).alignment = center
@@ -2635,7 +1629,10 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
         ws = wb.create_sheet("CHECKER WISE")
         headers = ["S.NO", "CHECKER", "SUB-DIVISION", "VILLAGES", "TOTAL SURVEY NOS",
                    "SUBMITTED", "VERIFIED + APPROVED", "% COMPLETION"]
+        if additions_hdr:
+            headers.append(additions_hdr)
         write_hdr(ws, headers)
+        additions_col = len(headers) if additions_hdr else None
         # Formula note as row 2 (comment above table)
         note_row = 2
         ws.cell(row=note_row, column=1, value="% Completion = (Verified + Approved + Seek Clarification) ÷ Submitted × 100").alignment = left
@@ -2647,11 +1644,16 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
             vals = [i, row["name"], row["subdivision"], row["villages_list"],
                     row["total"], row["submitted"], row["verified_plus_approved"], round(row["pct"], 2)]
             aligns = [center, left, left, left, center, center, center, center]
+            if additions_hdr:
+                vals.append(row["additions"] if row["additions"] is not None else "—")
+                aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
                 c.alignment = a; c.font = body_font; c.border = border
                 if ci in (5, 6, 7): c.number_format = "#,##0"
                 if ci == 8: c.number_format = '0.00"%"'
+                if additions_col and ci == additions_col and isinstance(v, int):
+                    c.number_format = "+#,##0;-#,##0;0"
         ct = views.get("checker_totals")
         if ct:
             pt = data_start + len(views["checker_rows"])
@@ -2660,34 +1662,30 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
             ws.cell(row=pt, column=6, value=ct["submitted"]).alignment = center
             ws.cell(row=pt, column=7, value=ct["verified_plus_approved"]).alignment = center
             ws.cell(row=pt, column=8, value=round(ct["pct"], 2)).alignment = center
+            if additions_col:
+                ws.cell(row=pt, column=additions_col, value=ct["additions"] if ct["additions"] is not None else "—").alignment = center
             for c in range(1, len(headers) + 1):
                 cc = ws.cell(row=pt, column=c)
                 cc.font = tot_font; cc.fill = tot_fill; cc.border = border
                 if c in (5, 6, 7): cc.number_format = "#,##0"
                 if c == 8: cc.number_format = '0.00"%"'
+                if additions_col and c == additions_col and isinstance(cc.value, int):
+                    cc.number_format = "+#,##0;-#,##0;0"
         widths = [7, 32, 14, 46, 16, 14, 18, 14]
+        if additions_hdr: widths.append(22)
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = f"A{data_start}"
 
     # === VILLAGE WISE ===
     if _include("village"):
-        ws = wb.create_sheet("VILLAGE WISE" if not pending_mode else "PENDING VILLAGES")
+        ws = wb.create_sheet("VILLAGE WISE")
         headers = ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "NAME OF PATWARI",
                    "SUBMITTED", "VERIFIED", "APPROVED"]
         if additions_hdr:
             headers.append(additions_hdr)
-        if pending_mode:
-            headers.extend(["DATE OF COMPLETION", "DAYS TO COMPLETION"])
         write_hdr(ws, headers)
-        additions_col = None
-        if additions_hdr:
-            additions_col = 9  # position after Approved
-        date_col = None
-        days_col = None
-        if pending_mode:
-            date_col = 10 if additions_hdr else 9
-            days_col = date_col + 1
+        additions_col = len(headers) if additions_hdr else None
         total_cols = len(headers)
         for i, row in enumerate(views["village_rows"], start=1):
             r = i + 1
@@ -2696,21 +1694,6 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
             aligns = [center, left, left, center, left, center, center, center]
             if additions_hdr:
                 vals.append(row["additions"] if row["additions"] is not None else "—")
-                aligns.append(center)
-            if pending_mode:
-                iso = row.get("expected_date")
-                vals.append(iso if iso else "—")
-                aligns.append(center)
-                days = row.get("days_remaining")
-                if days is None:
-                    days_txt = "—"
-                elif days > 0:
-                    days_txt = f"{days} day{'s' if days != 1 else ''} remaining"
-                elif days == 0:
-                    days_txt = "Due today"
-                else:
-                    days_txt = f"Delayed by {-days} day{'s' if days != -1 else ''}"
-                vals.append(days_txt)
                 aligns.append(center)
             for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
                 c = ws.cell(row=r, column=ci, value=v)
@@ -2722,7 +1705,7 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
         vt = len(views["village_rows"]) + 2
         v_tot = views.get("village_totals")
         use_filtered = v_tot is not None and any(r.get("band") for r in views["village_rows"])
-        ws.cell(row=vt, column=2, value=("TOTAL (Filtered)" if use_filtered else ("TOTAL (Pending)" if pending_mode else "TOTAL"))).alignment = left
+        ws.cell(row=vt, column=2, value=("TOTAL (Filtered)" if use_filtered else "TOTAL")).alignment = left
         if use_filtered:
             ws.cell(row=vt, column=4, value=v_tot["total"]).alignment = center
             ws.cell(row=vt, column=6, value=v_tot["submitted"]).alignment = center
@@ -2746,65 +1729,9 @@ def _generate_workbook(views, to_date, from_date, view_key="all", pending_mode=F
                 cc.number_format = "+#,##0;-#,##0;0"
         widths = [7, 14, 28, 20, 28, 14, 14, 14]
         if additions_hdr: widths.append(22)
-        if pending_mode: widths.extend([20, 22])
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
         ws.freeze_panes = "A2"
-
-    # === BUCKET STATUS + SUMMARY (pending mode only) ===
-    if pending_mode and (bucket_status_rows or bucket_summary_rows):
-        if bucket_status_rows:
-            ws = wb.create_sheet("BUCKET STATUS")
-            headers = ["S.NO", "TEHSIL", "VILLAGE", "TOTAL SURVEY NOS", "CURRENT STATUS"]
-            write_hdr(ws, headers)
-            for i, row in enumerate(bucket_status_rows or [], start=1):
-                r = i + 1
-                vals = [i, row["tehsil"], row["village"], row["total"], row["status_label"]]
-                aligns = [center, left, left, center, left]
-                for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
-                    c = ws.cell(row=r, column=ci, value=v)
-                    c.alignment = a; c.font = body_font; c.border = border
-                    if ci == 4: c.number_format = "#,##0"
-            for i, w in enumerate([7, 14, 28, 20, 40], start=1):
-                ws.column_dimensions[get_column_letter(i)].width = w
-            ws.freeze_panes = "A2"
-
-        if bucket_summary_rows:
-            ws = wb.create_sheet("BUCKET SUMMARY")
-            headers = ["S.NO", "TEHSIL", "TOTAL VILLAGES", "PENDING",
-                       "COMPLETED (NOT SUBMITTED)", "SUBMITTED FOR BUCKETING", "BUCKETED"]
-            write_hdr(ws, headers)
-            for i, row in enumerate(bucket_summary_rows or [], start=1):
-                r = i + 1
-                vals = [i, row["tehsil"], row["total_villages"], row["pending"],
-                        row["completed_only"], row["submitted"], row["bucketed"]]
-                aligns = [center, left, center, center, center, center, center]
-                for ci, (v, a) in enumerate(zip(vals, aligns), start=1):
-                    c = ws.cell(row=r, column=ci, value=v)
-                    c.alignment = a; c.font = body_font; c.border = border
-                    if ci >= 3: c.number_format = "#,##0"
-            # TOTAL row
-            tot_row = len(bucket_summary_rows) + 2
-            totals = {"total": 0, "pending": 0, "completed_only": 0, "submitted": 0, "bucketed": 0}
-            for row in bucket_summary_rows:
-                totals["total"] += row["total_villages"]
-                totals["pending"] += row["pending"]
-                totals["completed_only"] += row["completed_only"]
-                totals["submitted"] += row["submitted"]
-                totals["bucketed"] += row["bucketed"]
-            ws.cell(row=tot_row, column=2, value="TOTAL").alignment = left
-            ws.cell(row=tot_row, column=3, value=totals["total"]).alignment = center
-            ws.cell(row=tot_row, column=4, value=totals["pending"]).alignment = center
-            ws.cell(row=tot_row, column=5, value=totals["completed_only"]).alignment = center
-            ws.cell(row=tot_row, column=6, value=totals["submitted"]).alignment = center
-            ws.cell(row=tot_row, column=7, value=totals["bucketed"]).alignment = center
-            for c in range(1, 8):
-                cc = ws.cell(row=tot_row, column=c)
-                cc.font = tot_font; cc.fill = tot_fill; cc.border = border
-                if c >= 3: cc.number_format = "#,##0"
-            for i, w in enumerate([7, 16, 16, 12, 24, 22, 12], start=1):
-                ws.column_dimensions[get_column_letter(i)].width = w
-            ws.freeze_panes = "A2"
 
     # === META (always) ===
     ws4 = wb.create_sheet("META")
@@ -2834,16 +1761,13 @@ def healthz():
 def debug_files():
     """Diagnostic: shows exactly what files the running app sees in the
     filesystem — the same information has_plan_file() uses. Handy when the
-    Target Based view toggle isn't appearing, or a 500 error hits after a
-    reference file update."""
+    Target Based view toggle isn't appearing."""
     lines = []
     lines.append(f"Working directory: {os.getcwd()}")
     lines.append(f"SNAPSHOTS_DIR: {SNAPSHOTS_DIR}")
     lines.append(f"SNAPSHOTS_DIR exists: {os.path.isdir(SNAPSHOTS_DIR)}")
     lines.append("")
-    lines.append(f"reference file present at repo root: {_find_reference_path() is not None}")
-    if _find_reference_path():
-        lines.append(f"  found as: {_find_reference_path()!r}")
+    lines.append(f"reference.xlsx present in repo root: {os.path.exists(REFERENCE_PATH)}")
     lines.append("")
     lines.append("Contents of snapshots/ folder:")
     if os.path.isdir(SNAPSHOTS_DIR):
@@ -2856,81 +1780,9 @@ def debug_files():
         lines.append("  (directory does not exist)")
     lines.append("")
     lines.append(f"has_plan_file() returns: {has_plan_file()}")
-    try:
-        lines.append(f"all_snapshots() returns: {[(d.isoformat(), os.path.basename(p)) for d, p in all_snapshots()]}")
-    except Exception as e:
-        lines.append(f"all_snapshots() ERROR: {e}")
+    lines.append(f"all_snapshots() returns: {[(d.isoformat(), os.path.basename(p)) for d, p in all_snapshots()]}")
 
-    # === Reference file diagnostic ===
-    lines.append("")
-    lines.append("=" * 60)
-    lines.append("REFERENCE.XLSX DIAGNOSTIC")
-    lines.append("=" * 60)
-    if _find_reference_path():
-        ref_actual_path = _find_reference_path()
-        lines.append(f"Inspecting: {ref_actual_path}")
-        try:
-            xl_ref = pd.ExcelFile(ref_actual_path)
-            lines.append(f"Sheet names in reference.xlsx: {xl_ref.sheet_names}")
-            sheet = _pick_sheet(xl_ref)
-            lines.append(f"Picked sheet: {sheet!r}")
-            df_ref = pd.read_excel(xl_ref, sheet_name=sheet)
-            lines.append(f"Rows × cols: {df_ref.shape[0]} × {df_ref.shape[1]}")
-            lines.append(f"Raw column headers: {df_ref.columns.tolist()}")
-            try:
-                cols = _detect_columns(df_ref)
-                lines.append(f"Column detection result: {cols}")
-                required = ("tehsil", "village", "patwari", "khasras")
-                missing = [c for c in required if c not in cols]
-                if missing:
-                    lines.append(f"→ MISSING required columns: {missing}")
-                    lines.append(f"   The reference file must contain columns matching:")
-                    lines.append(f"     tehsil    (TEHSIL / TEHSIL NAME / tehsil)")
-                    lines.append(f"     village   (VILLAGE / VILLAGE NAME / village)")
-                    lines.append(f"     patwari   (CONCERNED PATWARI / PATWARI / patwari name)")
-                    lines.append(f"     khasras   (TOTAL KHASRAS / TOTAL SURVEY NOS / khasras)")
-                else:
-                    lines.append(f"→ All required columns detected. reference.xlsx should load fine.")
-                try:
-                    ref = load_reference()
-                    if ref is not None:
-                        lines.append(f"load_reference() succeeded: {len(ref)} rows")
-                    else:
-                        lines.append(f"load_reference() returned None")
-                except Exception as e:
-                    lines.append(f"load_reference() ERROR: {type(e).__name__}: {e}")
-            except Exception as e:
-                lines.append(f"Column detection ERROR: {type(e).__name__}: {e}")
-        except Exception as e:
-            lines.append(f"Failed to open reference.xlsx: {type(e).__name__}: {e}")
-    else:
-        lines.append("Reference file NOT FOUND. Accepted names: " + ", ".join(REFERENCE_FALLBACK_NAMES))
-
-    # === Completion feature diagnostic ===
-    lines.append("")
-    lines.append("=" * 60)
-    lines.append("COMPLETION FEATURE DIAGNOSTIC (Pending villages progress)")
-    lines.append("=" * 60)
-    lines.append(f"GITHUB_TOKEN set: {bool(GITHUB_TOKEN)}")
-    lines.append(f"GITHUB_REPO: {GITHUB_REPO!r}")
-    lines.append(f"GITHUB_BRANCH: {GITHUB_BRANCH!r}")
-    lines.append(f"COMPLETION_PASSWORD is set: {bool(COMPLETION_PASSWORD)} ({'from env' if os.environ.get('COMPLETION_PASSWORD') else 'default'})")
-    lines.append(f"has_completion_feature(): {has_completion_feature()}")
-    if has_completion_feature():
-        try:
-            lst, sha = _github_read_completed_file()
-            lines.append(f"Fetched completed_villages.json from GitHub: {len(lst)} entries" + (f", sha={sha[:8]}..." if sha else " (file does not yet exist — will be created on first mark)"))
-            if lst:
-                for entry in lst[:10]:
-                    lines.append(f"  · {entry['tehsil']} / {entry['village']}")
-                if len(lst) > 10:
-                    lines.append(f"  · ... and {len(lst) - 10} more")
-        except Exception as e:
-            lines.append(f"Failed to fetch completed_villages.json: {type(e).__name__}: {e}")
-    else:
-        lines.append("→ Toggle for 'Pending villages progress' will be HIDDEN until GITHUB_TOKEN is set.")
-
-    # === Template file diagnostic ===
+    # === Template diagnostic ===
     lines.append("")
     lines.append("=" * 60)
     lines.append("TEMPLATE FILE DIAGNOSTIC")
@@ -2943,47 +1795,16 @@ def debug_files():
         with open(tpl_path, "r", encoding="utf-8") as f:
             content = f.read()
         has_toggle = "mode-toggle-checkbox" in content
-        has_completion_check = "completion_available" in content
-        has_pending_label = "Pending villages progress" in content
+        has_plan_available = "plan_available" in content
+        has_target_view = "Target Based view" in content
         lines.append(f"Contains 'mode-toggle-checkbox': {has_toggle}")
-        lines.append(f"Contains 'completion_available' Jinja check: {has_completion_check}")
-        lines.append(f"Contains 'Pending villages progress' label: {has_pending_label}")
-        if has_toggle and has_completion_check and has_pending_label:
-            lines.append("→ Template IS the latest version.")
-        elif has_toggle and "plan_available" in content:
-            lines.append("→ Template is an older version (from Target Based view era).")
-            lines.append("   Re-upload templates/index.html from the latest zip.")
+        lines.append(f"Contains 'plan_available': {has_plan_available}")
+        lines.append(f"Contains 'Target Based view': {has_target_view}")
+        if has_toggle and has_plan_available:
+            lines.append("→ Template IS the updated version. Toggle should render.")
         else:
-            lines.append("→ Template is missing pieces. Re-upload templates/index.html.")
-
-    # === Actual HTML rendered ===
-    lines.append("")
-    lines.append("=" * 60)
-    lines.append("LIVE TOGGLE RENDER TEST")
-    lines.append("=" * 60)
-    try:
-        from flask import render_template_string
-        # Force-render just the toggle snippet from the template file
-        with open(tpl_path, "r", encoding="utf-8") as f:
-            tpl = f.read()
-        # Extract the toggle block from the source file
-        m = re.search(r"(\{% if completion_available %\}.*?\{% endif %\})", tpl, re.DOTALL)
-        if m:
-            snippet = m.group(1)
-            rendered = render_template_string(snippet, completion_available=has_completion_feature(), mode="default")
-            lines.append(f"With completion_available={has_completion_feature()}, the toggle block renders as:")
-            lines.append("-" * 60)
-            lines.append(rendered.strip() or "(empty — the {% if %} evaluated False)")
-            lines.append("-" * 60)
-            if rendered.strip():
-                lines.append("→ Server IS sending toggle HTML. If it's missing in browser, it's client-side (cache/proxy).")
-            else:
-                lines.append("→ Server is NOT sending toggle HTML. completion_available is False on this request.")
-        else:
-            lines.append("Could not locate the {% if completion_available %} block in the template.")
-    except Exception as e:
-        lines.append(f"Render test failed: {type(e).__name__}: {e}")
-
+            lines.append("→ Template is the OLD version. That's why the toggle is missing.")
+            lines.append("   You need to re-upload templates/index.html to GitHub.")
     return "<pre style='font-family:monospace;font-size:13px;padding:20px;background:#f6f3ec;color:#1f3f2e;line-height:1.5'>" + "\n".join(lines) + "</pre>"
 
 
