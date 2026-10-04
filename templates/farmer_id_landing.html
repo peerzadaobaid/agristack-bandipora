@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Farmer ID Generation Progress · Day-wise</title>
+<style>
+  :root {
+    --paper: #FDFBF5;
+    --bg: #F6F3EC;
+    --ink: #1F3F2E;
+    --text: #2A2E28;
+    --mute: #6E7568;
+    --rule: #D6D1C2;
+    --tint: #E8EEDE;
+    --accent: #4A8C5F;
+    --pos-bg: #E8EEDE;
+    --pos-text: #2C5040;
+    --neg-text: #B33A3A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  a.back-to-hub {
+    position: absolute;
+    top: 18px;
+    left: 20px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 7px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    text-decoration: none;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    transition: background 140ms;
+  }
+  a.back-to-hub:hover { background: var(--tint); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 20px 40px; }
+  header { padding-top: 44px; margin-bottom: 24px; }
+  header h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    color: var(--ink);
+    font-size: 28px;
+    letter-spacing: -0.01em;
+  }
+  header .lbl {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  header .sub {
+    color: var(--mute);
+    font-size: 13px;
+    margin-top: 6px;
+  }
+
+  .section {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .section-head {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .section-head h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: 0.02em;
+  }
+  .section-head .note {
+    font-size: 12px;
+    color: var(--mute);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    background: #F0EBDA;
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 600;
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #ECE7D5;
+    vertical-align: middle;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #FAF7EC; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .add-cell { font-weight: 500; }
+  .add-pos {
+    display: inline-block;
+    background: var(--pos-bg);
+    color: var(--pos-text);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+  }
+  .add-zero {
+    color: var(--mute);
+    font-style: italic;
+  }
+  .add-neg { color: var(--neg-text); }
+  .add-na { color: var(--mute); font-style: italic; }
+  .date-cell { font-weight: 500; color: var(--ink); }
+  .dow { color: var(--mute); font-size: 11px; margin-left: 4px; }
+  .pct { color: var(--mute); font-size: 11px; }
+
+  tr.selected-row td { background: #F3F0E4; }
+  tr.selected-row td:first-child {
+    border-left: 3px solid var(--accent);
+    padding-left: 11px;
+  }
+
+  .controls {
+    padding: 14px 20px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .controls label {
+    font-size: 12px;
+    color: var(--ink);
+    letter-spacing: 0.02em;
+  }
+  .controls select {
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 13px;
+    border: 1px solid var(--rule);
+    background: white;
+    color: var(--text);
+    border-radius: 3px;
+    min-width: 240px;
+  }
+  .controls .open-full {
+    background: var(--ink);
+    color: var(--paper);
+    text-decoration: none;
+    padding: 8px 14px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    border-radius: 3px;
+    transition: background 140ms;
+  }
+  .controls .open-full:hover { background: #2C5040; }
+
+  .frame-wrap {
+    position: relative;
+    background: #fff;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .frame-header {
+    padding: 10px 16px;
+    background: #F0EBDA;
+    border-bottom: 1px solid var(--rule);
+    font-size: 12px;
+    color: var(--ink);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .frame-header strong { font-weight: 600; }
+  iframe {
+    display: block;
+    width: 100%;
+    height: 1200px;
+    border: 0;
+    background: #fff;
+  }
+  .empty-note {
+    padding: 32px;
+    text-align: center;
+    color: var(--mute);
+    font-style: italic;
+    font-size: 13px;
+  }
+
+  @media (max-width: 720px) {
+    header h1 { font-size: 22px; }
+    .wrap { padding: 16px 12px 24px; }
+    thead th, tbody td { padding: 8px 10px; font-size: 12px; }
+    iframe { height: 900px; }
+  }
+</style>
+</head>
+<body>
+<a href="/" class="back-to-hub" aria-label="Back to Progress Monitoring landing page">&larr; &nbsp;Progress Monitoring</a>
+
+<div class="wrap">
+  <header>
+    <div class="lbl">Farmer ID Generation</div>
+    <h1>Day-wise Progress</h1>
+    <div class="sub">
+      {{ total_files }} file{% if total_files != 1 %}s{% endif %} uploaded.
+      Upload a new day as <code style="background:#F0EBDA;padding:2px 6px;font-family:Menlo,monospace;font-size:12px;border-radius:2px">FARMER_ID DD.MM.YYYY.html</code>
+      to the <code style="background:#F0EBDA;padding:2px 6px;font-family:Menlo,monospace;font-size:12px;border-radius:2px">templates/</code> folder on GitHub.
+    </div>
+  </header>
+
+  <!-- Day-wise additions summary -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Day-wise Additions</h2>
+      <span class="note">Additions = growth since the previous dated snapshot. Newest first.</span>
+    </div>
+    {% if rows or legacy_row %}
+    <table>
+      <thead>
+        <tr>
+          <th style="width:160px">Date</th>
+          <th class="num" style="width:120px">Target</th>
+          <th class="num" style="width:120px">Issued</th>
+          <th class="num" style="width:140px">Issued (added)</th>
+          <th class="num" style="width:120px">Approved</th>
+          <th class="num" style="width:150px">Approved (added)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="{% if row.date_label == selected_display or (selected_filename == row.filename) %}selected-row{% endif %}">
+          <td class="date-cell">
+            <a href="/farmer-id?view={{ row.date_label }}" style="color:inherit;text-decoration:none">
+              {{ row.date_display }}
+              <span class="dow">· {{ row.day_of_week[:3] }}</span>
+            </a>
+          </td>
+          <td class="num">{{ "{:,}".format(row.target) }}</td>
+          <td class="num">
+            {{ "{:,}".format(row.issued) }}
+            <span class="pct">({{ "%.1f"|format(row.issue_pct) }}%)</span>
+          </td>
+          <td class="num add-cell">
+            {% if row.issued_add is none %}
+              <span class="add-na">—</span>
+            {% elif row.issued_add > 0 %}
+              <span class="add-pos">+{{ "{:,}".format(row.issued_add) }}</span>
+            {% elif row.issued_add == 0 %}
+              <span class="add-zero">0</span>
+            {% else %}
+              <span class="add-neg">{{ "{:,}".format(row.issued_add) }}</span>
+            {% endif %}
+          </td>
+          <td class="num">
+            {{ "{:,}".format(row.approved) }}
+            <span class="pct">({{ "%.1f"|format(row.appr_pct) }}%)</span>
+          </td>
+          <td class="num add-cell">
+            {% if row.approved_add is none %}
+              <span class="add-na">—</span>
+            {% elif row.approved_add > 0 %}
+              <span class="add-pos">+{{ "{:,}".format(row.approved_add) }}</span>
+            {% elif row.approved_add == 0 %}
+              <span class="add-zero">0</span>
+            {% else %}
+              <span class="add-neg">{{ "{:,}".format(row.approved_add) }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if legacy_row %}
+        <tr class="{% if selected_filename == legacy_row.filename %}selected-row{% endif %}">
+          <td class="date-cell">
+            <a href="/farmer-id?view=legacy" style="color:inherit;text-decoration:none">
+              {{ legacy_row.date_display }}
+            </a>
+          </td>
+          <td class="num">{{ "{:,}".format(legacy_row.target) }}</td>
+          <td class="num">
+            {{ "{:,}".format(legacy_row.issued) }}
+            <span class="pct">({{ "%.1f"|format(legacy_row.issue_pct) }}%)</span>
+          </td>
+          <td class="num"><span class="add-na">—</span></td>
+          <td class="num">
+            {{ "{:,}".format(legacy_row.approved) }}
+            <span class="pct">({{ "%.1f"|format(legacy_row.appr_pct) }}%)</span>
+          </td>
+          <td class="num"><span class="add-na">—</span></td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-note">No dated files yet. Upload one named <code>FARMER_ID DD.MM.YYYY.html</code> to get started.</div>
+    {% endif %}
+  </div>
+
+  <!-- Dashboard viewer -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Full Dashboard</h2>
+      <span class="note">Pick a date to view that day's full dashboard below.</span>
+    </div>
+    <div class="controls">
+      <label for="date-select">View dashboard for:</label>
+      <select id="date-select" onchange="window.location.href = '/farmer-id?view=' + encodeURIComponent(this.value)">
+        {% for opt in dropdown %}
+        <option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.display }}</option>
+        {% endfor %}
+      </select>
+      <a class="open-full" href="/farmer-id?view={{ dropdown|selectattr('selected')|map(attribute='value')|first|default('') }}&raw=1" target="_blank" rel="noopener">
+        Open full-screen &rarr;
+      </a>
+    </div>
+    {% if selected_filename %}
+    <div class="frame-wrap">
+      <div class="frame-header">
+        <span>Showing: <strong>{{ selected_display }}</strong></span>
+        <span class="note">{{ selected_filename }}</span>
+      </div>
+      <iframe
+        src="/farmer-id/raw/{{ selected_filename }}?frame=1"
+        title="Farmer ID dashboard for {{ selected_display }}"
+        loading="lazy"></iframe>
+    </div>
+    {% else %}
+    <div class="empty-note">No file to display.</div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  // Make iframe tall enough to show the entire embedded dashboard without an
+  // inner scrollbar, so vertical scrolling of this page scrolls everything
+  // together. We cap at a sensible maximum for very long dashboards.
+  (function() {
+    var frame = document.querySelector('iframe');
+    if (!frame) return;
+    function fit() {
+      try {
+        var doc = frame.contentDocument;
+        if (!doc) return;
+        var h = Math.max(
+          doc.documentElement ? doc.documentElement.scrollHeight : 0,
+          doc.body ? doc.body.scrollHeight : 0
+        );
+        if (h > 0) frame.style.height = Math.min(h + 24, 4000) + 'px';
+      } catch (e) { /* cross-origin safeguard, same-origin here */ }
+    }
+    frame.addEventListener('load', function() {
+      fit();
+      setTimeout(fit, 300);
+      setTimeout(fit, 1000);
+    });
+    window.addEventListener('resize', fit);
+  })();
+</script>
+</body>
+</html>
