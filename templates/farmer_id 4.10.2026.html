@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bandipora Farmer Enrollment Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+  background: #f4f6f8;
+  color: #222;
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.header {
+  background: linear-gradient(135deg, #1a3a5c 0%, #305496 100%);
+  color: #fff;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.header-inner { max-width: 1200px; margin: 0 auto; }
+.header h1 { font-size: 24px; font-weight: 600; margin-bottom: 4px; }
+.header .sub { font-size: 13px; opacity: 0.85; }
+.container { max-width: 1200px; margin: 0 auto; padding: 24px; width: 100%; flex: 1; }
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid #dfe4ea;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.stat-card .label {
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.stat-card .value { font-size: 28px; font-weight: 700; color: #1a3a5c; }
+.stat-card .sub-note { font-size: 12px; color: #888; margin-top: 4px; }
+.panel {
+  background: #fff;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  overflow: hidden;
+}
+.panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #dfe4ea;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.panel-header h2 { font-size: 16px; color: #1a3a5c; font-weight: 600; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #eef1f5; }
+th {
+  background: #f7f9fc;
+  color: #1a3a5c;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr.clickable { cursor: pointer; transition: background 0.1s; }
+tbody tr.clickable:hover { background: #eef2f7; }
+tbody tr.clickable td:last-child::after {
+  content: '›';
+  color: #999;
+  font-size: 20px;
+  margin-left: 12px;
+  font-weight: bold;
+}
+.progress {
+  display: inline-block;
+  width: 100px;
+  height: 8px;
+  background: #e0e5eb;
+  border-radius: 4px;
+  overflow: hidden;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.progress-fill { height: 100%; transition: width 0.3s; }
+.pct-good { background: #28a745; }
+.pct-medium { background: #ffc107; }
+.pct-low { background: #dc3545; }
+.pct-zero { background: #ced4da; }
+/* Fixed-hue variants: one distinct colour per % column in the tehsil table. */
+.pct-fixed-blue   { background: #1e88e5; }
+.pct-fixed-orange { background: #f57c00; }
+.pct-fixed-green  { background: #43a047; }
+.pct-value { display: inline-block; min-width: 42px; font-variant-numeric: tabular-nums; }
+.totals-row { background: #d9e1f2; font-weight: 700; }
+.totals-row td { border-bottom: none; }
+.nav-back {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.back-btn {
+  background: #ea580c;
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s, transform 0.05s, box-shadow 0.15s;
+  font-family: inherit;
+  box-shadow: 0 2px 6px rgba(234,88,12,0.3);
+}
+.back-btn:hover { background: #c2410c; box-shadow: 0 3px 8px rgba(234,88,12,0.4); }
+.back-btn:active { transform: translateY(1px); }
+.back-btn .arrow { font-size: 18px; line-height: 1; font-weight: bold; }
+.back-btn.bottom {
+  background: #fff;
+  color: #ea580c;
+  border: 2px solid #ea580c;
+  box-shadow: none;
+  padding: 8px 18px;
+}
+.back-btn.bottom:hover { background: #ea580c; color: #fff; box-shadow: 0 2px 6px rgba(234,88,12,0.3); }
+.back-context {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.4;
+}
+.back-context b { color: #1a3a5c; font-weight: 600; }
+.back-context .sep { color: #ccc; margin: 0 6px; }
+.back-context .kbd {
+  display: inline-block;
+  background: #eef2f7;
+  border: 1px solid #cfd6df;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: "Consolas", monospace;
+  font-size: 11px;
+  color: #305496;
+}
+.back-bottom {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+  padding: 20px;
+}
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: #eef2f7;
+  color: #305496;
+}
+/* View-switcher — segmented card, prominent + obviously clickable */
+.view-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 22px;
+  padding: 6px;
+  background: linear-gradient(135deg, #e8eef7 0%, #d9e4f2 100%);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);
+}
+.view-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px 20px;
+  cursor: pointer;
+  background: #fff;
+  color: #305496;
+  font-weight: 600;
+  font-size: 15px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  transition: all 0.18s ease;
+  text-align: center;
+  letter-spacing: 0.2px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.view-tab:hover { background: #f4f8ff; border-color: #c7d6ea; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(48,84,150,0.12); }
+.view-tab.active {
+  background: linear-gradient(135deg, #1a3a5c 0%, #305496 100%);
+  color: #fff;
+  border-color: #1a3a5c;
+  box-shadow: 0 4px 12px rgba(48,84,150,0.3);
+  transform: translateY(-1px);
+}
+.view-tab.active .tab-icon { background: rgba(255,255,255,0.25); color: #fff; }
+.view-tab .tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #eef2f7;
+  color: #305496;
+  font-size: 16px;
+  flex-shrink: 0;
+  transition: background 0.18s, color 0.18s;
+}
+.view-tab .tab-sub {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.75;
+  margin-top: 2px;
+  letter-spacing: 0.3px;
+}
+@media (max-width: 640px) {
+  .view-tabs { grid-template-columns: 1fr; }
+  .view-tab { padding: 12px 14px; font-size: 13px; }
+}
+footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
+@media (max-width: 640px) {
+  .container { padding: 16px; }
+  .header { padding: 18px 16px; }
+  .header h1 { font-size: 18px; }
+  table { font-size: 12px; }
+  th, td { padding: 8px 10px; }
+  .progress { width: 60px; }
+  .stat-card .value { font-size: 22px; }
+  .panel-header h2 { font-size: 14px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <h1>Bandipora District — Farmer Enrollment Dashboard</h1>
+    <div class="sub">AGRISTACK enrollment progress · Last updated: <span id="lastUpdated"></span></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="summary-grid" id="summaryGrid"></div>
+
+  <div class="view-tabs" id="viewTabs">
+    <button class="view-tab active" id="tabProgress" onclick="switchTab('progress')">
+      <span class="tab-icon">📊</span>
+      <span>Tehsil-wise Progress<span class="tab-sub">All villages · targets vs enrollment</span></span>
+    </button>
+    <button class="view-tab" id="tabCD" onclick="switchTab('cd')">
+      <span class="tab-icon">👥</span>
+      <span>Camp Director Progress<span class="tab-sub">59 villages · by assigned director</span></span>
+    </button>
+  </div>
+
+  <div id="viewTehsil" class="view">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Tehsil-wise Progress <small style="color:#888;font-weight:400;font-size:12px;margin-left:6px">Click any row to see village details</small><br><small style="color:#666;font-weight:400;font-size:11px"><span style="color:#f57c00;font-weight:600">■</span> Issue % = Issued Farmer IDs ÷ Target &nbsp;·&nbsp; <span style="color:#43a047;font-weight:600">■</span> Approval % = Approved ÷ Issued Farmer IDs</small></h2>
+        <span class="badge" id="tehsilCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="tehsilTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tehsil</th>
+              <th class="num" style="white-space:normal;max-width:70px">Total Villages</th>
+              <th class="num" style="white-space:normal;max-width:80px">Villages Bucketed</th>
+              <th class="num" style="white-space:normal;max-width:120px">Target of Farmer IDs to be Generated</th>
+              <th class="num" style="white-space:normal;max-width:95px">Total Issued Farmer IDs</th>
+              <th class="num" style="white-space:normal;max-width:95px">Issued since 1 Oct</th>
+              <th>Issue %</th>
+              <th class="num">Approved</th>
+              <th>Approval %</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewVillage" class="view" style="display:none">
+    <div class="nav-back">
+      <button class="back-btn" onclick="showTehsils()">
+        <span class="arrow">←</span>
+        <span>Back to All Tehsils</span>
+      </button>
+      <div class="back-context">
+        Viewing villages in <b id="villageBreadcrumb"></b><br>
+        <small>Tip: press <span class="kbd">Esc</span> or use browser Back to return</small>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2 id="villageViewTitle"></h2><div style="color:#666;font-size:11px;margin-top:4px">Issue % = Issued ÷ Target &nbsp;·&nbsp; Approval % = Approved ÷ Issued (approver progress)</div>
+        <span class="badge" id="villageCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="villageTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Village</th>
+              <th class="num">Target</th>
+              <th class="num">Total Issued</th>
+              <th class="num" style="white-space:normal;max-width:95px">Issued since 1 Oct</th>
+              <th>Issue %</th>
+              <th class="num">Approved</th>
+              <th>Approval %</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="back-bottom">
+      <button class="back-btn bottom" onclick="showTehsils()">
+        <span class="arrow">←</span>
+        <span>Back to All Tehsils</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ================= CAMP DIRECTOR PROGRESS (3-level) ================= -->
+
+  <!-- L1: tehsil-wise, filtered to 59 non-first-bucket villages -->
+  <div id="viewCDTehsil" class="view" style="display:none">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Camp Director Progress &mdash; Tehsil-wise
+          <small style="color:#888;font-weight:400;font-size:12px;margin-left:6px">59 non-first-bucket villages &middot; click any row to see camp directors</small>
+          <br><small style="color:#666;font-weight:400;font-size:11px">
+            <span style="color:#f57c00;font-weight:600">■</span> Issue % = Total Issued &divide; Target &nbsp;&middot;&nbsp;
+            <span style="color:#43a047;font-weight:600">■</span> Approval % = Approved &divide; Total Issued
+          </small>
+        </h2>
+        <span class="badge" id="cdTehsilCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="cdTehsilTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tehsil</th>
+              <th class="num" style="white-space:normal;max-width:80px">Camp Directors</th>
+              <th class="num" style="white-space:normal;max-width:70px">Villages</th>
+              <th class="num" style="white-space:normal;max-width:95px">Target</th>
+              <th class="num" style="white-space:normal;max-width:95px">Total Issued</th>
+              <th class="num" style="white-space:normal;max-width:95px">Issued since 1 Oct</th>
+              <th>Issue %</th>
+              <th class="num">Approved</th>
+              <th>Approval %</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- L2: directors in a tehsil -->
+  <div id="viewCDDirectors" class="view" style="display:none">
+    <div class="nav-back">
+      <button class="back-btn" onclick="showCDTehsils()">
+        <span class="arrow">←</span>
+        <span>Back to Tehsils</span>
+      </button>
+      <div class="back-context">
+        Camp Directors in <b id="cdDirBreadcrumb"></b><br>
+        <small>Each row aggregates across villages the director handles. Multi-village rows are clickable.</small>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2 id="cdDirTitle"></h2>
+        <span class="badge" id="cdDirCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="cdDirectorTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Camp Director</th>
+              <th class="num">Villages</th>
+              <th class="num">Target</th>
+              <th class="num">Total Issued</th>
+              <th class="num">Since 1 Oct</th>
+              <th>Issue %</th>
+              <th class="num">Approved</th>
+              <th>Approval %</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="back-bottom">
+      <button class="back-btn bottom" onclick="showCDTehsils()">
+        <span class="arrow">←</span>
+        <span>Back to Tehsils</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- L3: villages under a specific director -->
+  <div id="viewCDVillages" class="view" style="display:none">
+    <div class="nav-back">
+      <button class="back-btn" onclick="cdBackToDirectors()">
+        <span class="arrow">←</span>
+        <span>Back to Directors</span>
+      </button>
+      <div class="back-context">
+        <b id="cdVilBreadcrumb"></b><br>
+        <small>Per-village progress under this camp director.</small>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2 id="cdVilTitle"></h2>
+        <span class="badge" id="cdVilCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="cdVillageTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Village</th>
+              <th class="num">Target</th>
+              <th class="num">Total Issued</th>
+              <th class="num">Since 1 Oct</th>
+              <th>Issue %</th>
+              <th class="num">Approved</th>
+              <th>Approval %</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="back-bottom">
+      <button class="back-btn bottom" onclick="cdBackToDirectors()">
+        <span class="arrow">←</span>
+        <span>Back to Directors</span>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<footer>Bandipora Farmer Enrollment Dashboard · Data as of <span id="footerDate"></span></footer>
+
+<script>
+const DATA = {"generated":"2026-10-04T15:08:17.305Z","tehsils":[{"tehsil":"SUMBAL","target":22499,"issuedBaseline":2275,"approvedBaseline":1596,"issued":2884,"approved":1636,"villagesBucketed":20,"bucketed":4587,"totalVillages":21,"totalSurveyNos":33624,"villages":[{"village":"Gund i Nowgam","target":587,"issuedBaseline":396,"approvedBaseline":237,"issued":397,"approved":237,"firstBucket":true,"campDirector":null},{"village":"Shadi Pora ","target":781,"issuedBaseline":385,"approvedBaseline":254,"issued":385,"approved":254,"firstBucket":true,"campDirector":null},{"village":"Najin","target":404,"issuedBaseline":198,"approvedBaseline":155,"issued":198,"approved":155,"firstBucket":true,"campDirector":null},{"village":"Malik Pora","target":347,"issuedBaseline":152,"approvedBaseline":115,"issued":152,"approved":115,"firstBucket":true,"campDirector":null},{"village":"Zal Pora","target":602,"issuedBaseline":255,"approvedBaseline":197,"issued":255,"approved":197,"firstBucket":true,"campDirector":null},{"village":"Gaad Khud","target":674,"issuedBaseline":264,"approvedBaseline":186,"issued":264,"approved":186,"firstBucket":true,"campDirector":null},{"village":"Chewa","target":1116,"issuedBaseline":394,"approvedBaseline":270,"issued":394,"approved":270,"firstBucket":true,"campDirector":null},{"village":"Shilvat ","target":767,"issuedBaseline":231,"approvedBaseline":182,"issued":231,"approved":182,"firstBucket":true,"campDirector":null},{"village":"Asham","target":1296,"issuedBaseline":0,"approvedBaseline":0,"issued":161,"approved":21,"firstBucket":false,"campDirector":{"name":"Mr Jameel Farooq","phone":"7006912553"}},{"village":"Hilalabad","target":1164,"issuedBaseline":0,"approvedBaseline":0,"issued":92,"approved":6,"firstBucket":false,"campDirector":{"name":"Dr Suhail Ahmad","phone":"9797756269"}},{"village":"Odina","target":1006,"issuedBaseline":0,"approvedBaseline":0,"issued":71,"approved":1,"firstBucket":false,"campDirector":{"name":"Dr Shaista Naz","phone":"7780935280"}},{"village":"Sumbal Inderkote","target":849,"issuedBaseline":0,"approvedBaseline":0,"issued":36,"approved":1,"firstBucket":false,"campDirector":{"name":"Dr Syed Mubarak Hussain Shah","phone":"9858332300"}},{"village":"Wahid pora","target":884,"issuedBaseline":0,"approvedBaseline":0,"issued":33,"approved":2,"firstBucket":false,"campDirector":null},{"village":"Sarai Dangarpora","target":2149,"issuedBaseline":0,"approvedBaseline":0,"issued":72,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Gund i Khalil","target":1308,"issuedBaseline":0,"approvedBaseline":0,"issued":36,"approved":3,"firstBucket":false,"campDirector":null},{"village":"Trigam","target":1399,"issuedBaseline":0,"approvedBaseline":0,"issued":26,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Suhail Ahmad","phone":"9797756269"}},{"village":"Rakh Sultan Pora","target":1973,"issuedBaseline":0,"approvedBaseline":0,"issued":29,"approved":2,"firstBucket":false,"campDirector":null},{"village":"Rakh Shilvat","target":2692,"issuedBaseline":0,"approvedBaseline":0,"issued":37,"approved":3,"firstBucket":false,"campDirector":null},{"village":"NOWGAM","target":941,"issuedBaseline":0,"approvedBaseline":0,"issued":8,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Mudasir Ahmad Shah","phone":"9906580671"}},{"village":"Ganastan","target":1560,"issuedBaseline":0,"approvedBaseline":0,"issued":7,"approved":1,"firstBucket":false,"campDirector":{"name":"Mr Jameel Farooq","phone":"7006912553"}}]},{"tehsil":"BANDIPORA","target":23286,"issuedBaseline":1890,"approvedBaseline":1280,"issued":2224,"approved":1292,"villagesBucketed":24,"bucketed":7755,"totalVillages":43,"totalSurveyNos":72131,"villages":[{"village":"Shamthan","target":196,"issuedBaseline":88,"approvedBaseline":43,"issued":88,"approved":43,"firstBucket":true,"campDirector":null},{"village":"Chak Arsala Khan","target":482,"issuedBaseline":216,"approvedBaseline":185,"issued":216,"approved":185,"firstBucket":true,"campDirector":null},{"village":"Labkachal","target":136,"issuedBaseline":58,"approvedBaseline":37,"issued":58,"approved":37,"firstBucket":true,"campDirector":null},{"village":"Takiya Ahmad Shah","target":355,"issuedBaseline":148,"approvedBaseline":114,"issued":148,"approved":114,"firstBucket":true,"campDirector":null},{"village":"Brar","target":640,"issuedBaseline":254,"approvedBaseline":187,"issued":254,"approved":187,"firstBucket":true,"campDirector":null},{"village":"Weven","target":377,"issuedBaseline":146,"approvedBaseline":11,"issued":146,"approved":11,"firstBucket":true,"campDirector":null},{"village":"Chandaji","target":186,"issuedBaseline":67,"approvedBaseline":51,"issued":67,"approved":51,"firstBucket":true,"campDirector":null},{"village":"Kharpora","target":531,"issuedBaseline":183,"approvedBaseline":154,"issued":183,"approved":154,"firstBucket":true,"campDirector":null},{"village":"Dachigam","target":295,"issuedBaseline":98,"approvedBaseline":82,"issued":98,"approved":82,"firstBucket":true,"campDirector":null},{"village":"Chak Reshipora","target":195,"issuedBaseline":59,"approvedBaseline":6,"issued":59,"approved":6,"firstBucket":true,"campDirector":null},{"village":"Papachan","target":515,"issuedBaseline":153,"approvedBaseline":116,"issued":153,"approved":116,"firstBucket":true,"campDirector":null},{"village":"Gundi Qasier","target":465,"issuedBaseline":138,"approvedBaseline":107,"issued":138,"approved":107,"firstBucket":true,"campDirector":null},{"village":"Chuntimulla","target":1051,"issuedBaseline":282,"approvedBaseline":187,"issued":282,"approved":187,"firstBucket":true,"campDirector":null},{"village":"Khayar","target":899,"issuedBaseline":0,"approvedBaseline":0,"issued":65,"approved":4,"firstBucket":false,"campDirector":{"name":"Mr Mohd Abbas Mir (HDO)","phone":"7006051991"}},{"village":"Gamroo","target":660,"issuedBaseline":0,"approvedBaseline":0,"issued":44,"approved":2,"firstBucket":false,"campDirector":{"name":"Mr Gulzar Ahmad Khan","phone":"7889808614"}},{"village":"Nass","target":514,"issuedBaseline":0,"approvedBaseline":0,"issued":30,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Garoora","target":1388,"issuedBaseline":0,"approvedBaseline":0,"issued":69,"approved":5,"firstBucket":false,"campDirector":{"name":"Mr Javid Ahmad Dar","phone":"9697876747"}},{"village":"Gund Dachina","target":699,"issuedBaseline":0,"approvedBaseline":0,"issued":24,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Adil Majeed","phone":"7788932598"}},{"village":"Nadihal","target":1230,"issuedBaseline":0,"approvedBaseline":0,"issued":33,"approved":0,"firstBucket":false,"campDirector":{"name":"Mr Javid Ahmad Dar","phone":"9697876747"}},{"village":"Panjigam","target":992,"issuedBaseline":0,"approvedBaseline":0,"issued":26,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Aijaz Ahmad","phone":"9149986467"}},{"village":"Watapora","target":1209,"issuedBaseline":0,"approvedBaseline":0,"issued":27,"approved":1,"firstBucket":false,"campDirector":{"name":"Mr Aarif Hussain Rather","phone":"7006515845"}},{"village":"Ayatmulla","target":821,"issuedBaseline":0,"approvedBaseline":0,"issued":12,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Reyaz Ahmad","phone":"7889374549"}},{"village":"Athwatoo","target":645,"issuedBaseline":0,"approvedBaseline":0,"issued":3,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Sheeraz Ahmad","phone":"8491007147"}},{"village":"Onagam","target":1857,"issuedBaseline":0,"approvedBaseline":0,"issued":1,"approved":0,"firstBucket":false,"campDirector":{"name":"Mr Javid Ahmad Dar","phone":"9697876747"}},{"village":"Aragam","target":1358,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Tariq Ahmad","phone":"9596184321"}},{"village":"Lawaypora","target":1118,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Mr Mohd Abbas Mir (HDO)","phone":"7006051991"}},{"village":"Gundipora Rampora","target":1082,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Soner Wani","target":1058,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Kudara","target":986,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Tariq Ahmad","phone":"9596184321"}},{"village":"Lowdara","target":540,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Mr Aasif Jameel","phone":"7006414605"}},{"village":"Ahemshreif","target":444,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Reyaz Ahmad","phone":"7889374549"}},{"village":"Bhutto","target":362,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Ishtiyaq Mughal","phone":"7780861724"}}]},{"tehsil":"TULAIL","target":5451,"issuedBaseline":713,"approvedBaseline":479,"issued":1090,"approved":560,"villagesBucketed":13,"bucketed":2191,"totalVillages":18,"totalSurveyNos":8036,"villages":[{"village":"Hussangam","target":265,"issuedBaseline":160,"approvedBaseline":142,"issued":160,"approved":142,"firstBucket":true,"campDirector":null},{"village":"Manz Gund","target":181,"issuedBaseline":92,"approvedBaseline":48,"issued":92,"approved":48,"firstBucket":true,"campDirector":null},{"village":"Wazirthal","target":116,"issuedBaseline":58,"approvedBaseline":50,"issued":58,"approved":50,"firstBucket":true,"campDirector":null},{"village":"Puranatulail","target":208,"issuedBaseline":102,"approvedBaseline":66,"issued":102,"approved":66,"firstBucket":true,"campDirector":null},{"village":"Kilshay Payeen","target":205,"issuedBaseline":95,"approvedBaseline":32,"issued":95,"approved":32,"firstBucket":true,"campDirector":null},{"village":"Gund Gul Sheikh","target":157,"issuedBaseline":59,"approvedBaseline":54,"issued":59,"approved":54,"firstBucket":true,"campDirector":null},{"village":"Malangam","target":208,"issuedBaseline":77,"approvedBaseline":68,"issued":77,"approved":68,"firstBucket":true,"campDirector":null},{"village":"Abdullian","target":213,"issuedBaseline":70,"approvedBaseline":19,"issued":70,"approved":19,"firstBucket":true,"campDirector":null},{"village":"Baduaab","target":502,"issuedBaseline":0,"approvedBaseline":0,"issued":157,"approved":27,"firstBucket":false,"campDirector":{"name":"Dr.Nazir Ahmad","phone":"9419418166"}},{"village":"Zedgey","target":132,"issuedBaseline":0,"approvedBaseline":0,"issued":31,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Neeru","target":443,"issuedBaseline":0,"approvedBaseline":0,"issued":101,"approved":28,"firstBucket":false,"campDirector":{"name":"Dr.Aabid VAS","phone":"9149696927"}},{"village":"Gujran","target":450,"issuedBaseline":0,"approvedBaseline":0,"issued":65,"approved":26,"firstBucket":false,"campDirector":{"name":"Dr.Nazir Ahmad","phone":"9419418166"}},{"village":"Dengithal","target":187,"issuedBaseline":0,"approvedBaseline":0,"issued":23,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Budugam","target":648,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Saradaab","target":459,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Jurnial","target":446,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Buglinder","target":397,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Mr.Abdullah","phone":"7006868262"}},{"village":"Barnaie","target":234,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null}]},{"tehsil":"GUREZ","target":6165,"issuedBaseline":489,"approvedBaseline":405,"issued":902,"approved":414,"villagesBucketed":8,"bucketed":1491,"totalVillages":9,"totalSurveyNos":10808,"villages":[{"village":"Koragbal","target":111,"issuedBaseline":59,"approvedBaseline":55,"issued":59,"approved":55,"firstBucket":true,"campDirector":null},{"village":"Mastan Khopri","target":421,"issuedBaseline":193,"approvedBaseline":158,"issued":193,"approved":158,"firstBucket":true,"campDirector":null},{"village":"Khandiyal","target":632,"issuedBaseline":237,"approvedBaseline":192,"issued":237,"approved":192,"firstBucket":true,"campDirector":null},{"village":"Markoot","target":586,"issuedBaseline":0,"approvedBaseline":0,"issued":121,"approved":2,"firstBucket":false,"campDirector":{"name":"Dr.Naseer Shanum.SDO Gurez","phone":"6005498991"}},{"village":"Shah Pora - Achoora (Churwan)","target":1114,"issuedBaseline":0,"approvedBaseline":0,"issued":128,"approved":2,"firstBucket":false,"campDirector":null},{"village":"Gulshanpora","target":847,"issuedBaseline":0,"approvedBaseline":0,"issued":70,"approved":4,"firstBucket":false,"campDirector":{"name":"Dr.Ishfaq Ahamd,VAS","phone":"7051260966"}},{"village":"Badwan","target":1213,"issuedBaseline":0,"approvedBaseline":0,"issued":93,"approved":1,"firstBucket":false,"campDirector":null},{"village":"Dawar","target":670,"issuedBaseline":0,"approvedBaseline":0,"issued":1,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr.Naseer Shanum.SDO Gurez","phone":"6005498991"}},{"village":"Kanzalwan Nail","target":571,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr.Ishfaq Ahamd,VAS","phone":"7051260966"}}]},{"tehsil":"HAJIN","target":11847,"issuedBaseline":580,"approvedBaseline":460,"issued":853,"approved":469,"villagesBucketed":14,"bucketed":1785,"totalVillages":24,"totalSurveyNos":39356,"villages":[{"village":"Gund-i-Ramzan","target":11,"issuedBaseline":7,"approvedBaseline":6,"issued":7,"approved":6,"firstBucket":true,"campDirector":null},{"village":"Tangpora","target":220,"issuedBaseline":105,"approvedBaseline":92,"issued":105,"approved":92,"firstBucket":true,"campDirector":null},{"village":"Gund-i-Balkh","target":322,"issuedBaseline":148,"approvedBaseline":118,"issued":148,"approved":118,"firstBucket":true,"campDirector":null},{"village":"Zoonipora","target":465,"issuedBaseline":125,"approvedBaseline":93,"issued":125,"approved":93,"firstBucket":true,"campDirector":null},{"village":"Madwan","target":777,"issuedBaseline":194,"approvedBaseline":150,"issued":195,"approved":150,"firstBucket":true,"campDirector":null},{"village":"Kani Pora","target":427,"issuedBaseline":0,"approvedBaseline":0,"issued":60,"approved":3,"firstBucket":false,"campDirector":null},{"village":"Gulshanpora","target":821,"issuedBaseline":0,"approvedBaseline":0,"issued":57,"approved":4,"firstBucket":false,"campDirector":{"name":"Dr Abdul Rashid Teli","phone":"8493011248"}},{"village":"Gundi Boon","target":754,"issuedBaseline":0,"approvedBaseline":0,"issued":40,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Arif Mohd Khan","phone":"7889818735"}},{"village":"Gulabwari","target":28,"issuedBaseline":1,"approvedBaseline":1,"issued":1,"approved":1,"firstBucket":true,"campDirector":null},{"village":"Gundi Saderkote","target":2139,"issuedBaseline":0,"approvedBaseline":0,"issued":59,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Sari Hari Karan Gund","target":529,"issuedBaseline":0,"approvedBaseline":0,"issued":12,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Rakh i Hajin","target":1107,"issuedBaseline":0,"approvedBaseline":0,"issued":23,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Vijipara","target":1269,"issuedBaseline":0,"approvedBaseline":0,"issued":20,"approved":2,"firstBucket":false,"campDirector":null},{"village":"Poshwari","target":1176,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Abdul Rashid Teli","phone":"8493011248"}},{"village":"Gundi Jahangir","target":1017,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":null},{"village":"Gund i Prang","target":785,"issuedBaseline":0,"approvedBaseline":0,"issued":0,"approved":0,"firstBucket":false,"campDirector":{"name":"Dr Ateeqa","phone":"9596657419"}},{"village":"Kosumbagh","target":0,"issuedBaseline":0,"approvedBaseline":0,"issued":1,"approved":0,"firstBucket":false,"campDirector":null}]},{"tehsil":"ALOOSA","target":3390,"issuedBaseline":286,"approvedBaseline":3,"issued":339,"approved":6,"villagesBucketed":2,"bucketed":2204,"totalVillages":6,"totalSurveyNos":22421,"villages":[{"village":"Ashtangoo","target":1472,"issuedBaseline":286,"approvedBaseline":3,"issued":292,"approved":3,"firstBucket":true,"campDirector":null},{"village":"Mangnipora","target":1918,"issuedBaseline":0,"approvedBaseline":0,"issued":47,"approved":3,"firstBucket":false,"campDirector":{"name":"Dr Aijaz Ahmad","phone":"9149986467"}}]},{"tehsil":"AJAS","target":3630,"issuedBaseline":230,"approvedBaseline":159,"issued":305,"approved":217,"villagesBucketed":2,"bucketed":382,"totalVillages":3,"totalSurveyNos":6853,"villages":[{"village":"S.K. Payeen","target":718,"issuedBaseline":230,"approvedBaseline":159,"issued":230,"approved":159,"firstBucket":true,"campDirector":null},{"village":"Ajas","target":2912,"issuedBaseline":0,"approvedBaseline":0,"issued":75,"approved":58,"firstBucket":false,"campDirector":{"name":"Leteef Ahmad Shah / SMS III","phone":""}}]}]};
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+}
+
+function pctClass(pct) {
+  if (pct === 0) return 'pct-zero';
+  if (pct < 30) return 'pct-low';
+  if (pct < 70) return 'pct-medium';
+  return 'pct-good';
+}
+
+var FIXED_PCT_COLORS = { blue: '#1e88e5', orange: '#f57c00', green: '#43a047' };
+
+function pctBar(num, den, colorOverride) {
+  var pct = den > 0 ? Math.round(num / den * 100) : 0;
+  var cls = colorOverride ? ('pct-fixed-' + colorOverride) : pctClass(pct);
+  var textStyle = colorOverride && FIXED_PCT_COLORS[colorOverride]
+    ? ' style="color:' + FIXED_PCT_COLORS[colorOverride] + ';font-weight:600"'
+    : '';
+  var w = Math.min(pct, 100);
+  return '<span class="progress"><span class="progress-fill ' + cls + '" style="width:' + w + '%"></span></span><span class="pct-value"' + textStyle + '>' + pct + '%</span>';
+}
+
+function sumBy(arr, f) { return arr.reduce(function(s,x){return s+f(x);}, 0); }
+
+function renderSummary() {
+  var totalTarget = sumBy(DATA.tehsils, function(t){return t.target;});
+  var totalIssued = sumBy(DATA.tehsils, function(t){return t.issued;});
+  var totalApproved = sumBy(DATA.tehsils, function(t){return t.approved;});
+  var totalVillages = sumBy(DATA.tehsils, function(t){return t.villages.length;});
+  var issuePct = totalTarget > 0 ? Math.round(totalIssued/totalTarget*100) : 0;
+  var apprPctIssued = totalIssued > 0 ? Math.round(totalApproved/totalIssued*100) : 0;
+  var pending = totalIssued - totalApproved;
+
+  document.getElementById('summaryGrid').innerHTML =
+    '<div class="stat-card"><div class="label">Target</div><div class="value">' + totalTarget.toLocaleString() + '</div><div class="sub-note">' + totalVillages + ' villages · ' + DATA.tehsils.length + ' tehsils</div></div>' +
+    '<div class="stat-card"><div class="label">Issued</div><div class="value">' + totalIssued.toLocaleString() + '</div><div class="sub-note">' + issuePct + '% of target</div></div>' +
+    '<div class="stat-card"><div class="label">Approved</div><div class="value">' + totalApproved.toLocaleString() + '</div><div class="sub-note">' + apprPctIssued + '% of issued</div></div>' +
+    '<div class="stat-card"><div class="label">Pending Approval</div><div class="value">' + pending.toLocaleString() + '</div><div class="sub-note">Issued but not yet approved</div></div>';
+}
+
+function renderTehsils() {
+  var body = '';
+  for (var i = 0; i < DATA.tehsils.length; i++) {
+    var t = DATA.tehsils[i];
+    var safe = t.tehsil.replace(/'/g, "\\'");
+    var totVillagesCell = t.totalVillages > 0 ? t.totalVillages : '—';
+    var tSinceOct = t.issued - (t.issuedBaseline || 0);
+    body += '<tr class="clickable" onclick="showVillages(\'' + safe + '\')">' +
+      '<td>' + (i+1) + '</td>' +
+      '<td><strong>' + escapeHtml(t.tehsil) + '</strong></td>' +
+      '<td class="num">' + totVillagesCell + '</td>' +
+      '<td class="num">' + t.villagesBucketed + '</td>' +
+      '<td class="num">' + t.target.toLocaleString() + '</td>' +
+      '<td class="num"><strong>' + t.issued.toLocaleString() + '</strong></td>' +
+      '<td class="num" style="color:#1e88e5">' + (tSinceOct > 0 ? '+' : '') + tSinceOct.toLocaleString() + '</td>' +
+      '<td>' + pctBar(t.issued, t.target, 'orange') + '</td>' +
+      '<td class="num">' + t.approved.toLocaleString() + '</td>' +
+      '<td>' + pctBar(t.approved, t.issued, 'green') + '</td>' +
+      '<td></td>' +
+      '</tr>';
+  }
+  var totalTarget         = sumBy(DATA.tehsils, function(t){return t.target;});
+  var totalIssued         = sumBy(DATA.tehsils, function(t){return t.issued;});
+  var totalApproved       = sumBy(DATA.tehsils, function(t){return t.approved;});
+  var totalIssuedBaseline = sumBy(DATA.tehsils, function(t){return t.issuedBaseline || 0;});
+  var totalSinceOct       = totalIssued - totalIssuedBaseline;
+  var totalVillagesRef    = sumBy(DATA.tehsils, function(t){return t.totalVillages;});
+  var totalVillagesBkt    = sumBy(DATA.tehsils, function(t){return t.villagesBucketed;});
+
+  document.querySelector('#tehsilTable tbody').innerHTML = body;
+  document.querySelector('#tehsilTable tfoot').innerHTML =
+    '<tr class="totals-row">' +
+    '<td colspan="2">TOTAL</td>' +
+    '<td class="num">' + totalVillagesRef.toLocaleString() + '</td>' +
+    '<td class="num">' + totalVillagesBkt.toLocaleString() + '</td>' +
+    '<td class="num">' + totalTarget.toLocaleString() + '</td>' +
+    '<td class="num"><strong>' + totalIssued.toLocaleString() + '</strong></td>' +
+    '<td class="num" style="color:#1e88e5">' + (totalSinceOct > 0 ? '+' : '') + totalSinceOct.toLocaleString() + '</td>' +
+    '<td>' + pctBar(totalIssued, totalTarget, 'orange') + '</td>' +
+    '<td class="num">' + totalApproved.toLocaleString() + '</td>' +
+    '<td>' + pctBar(totalApproved, totalIssued, 'green') + '</td>' +
+    '<td></td>' +
+    '</tr>';
+  document.getElementById('tehsilCount').textContent = DATA.tehsils.length + ' tehsils';
+}
+
+function renderVillages(tehsilName) {
+  var t = null;
+  for (var i = 0; i < DATA.tehsils.length; i++) {
+    if (DATA.tehsils[i].tehsil === tehsilName) { t = DATA.tehsils[i]; break; }
+  }
+  if (!t) return;
+
+  document.getElementById('villageViewTitle').textContent = 'Villages in ' + tehsilName;
+  document.getElementById('villageBreadcrumb').textContent = tehsilName;
+  document.getElementById('villageCount').textContent = t.villages.length + ' villages';
+
+  var villages = t.villages.slice().sort(function(a,b){var pa = a.target > 0 ? a.issued/a.target : -1;var pb = b.target > 0 ? b.issued/b.target : -1;return pb - pa;});
+  var body = '';
+  for (var j = 0; j < villages.length; j++) {
+    var v = villages[j];
+    var vSinceOct = v.issued - (v.issuedBaseline || 0);
+    var rowStyle = v.firstBucket ? ' style="background:#fff4e3"' : '';
+    var bucketTag = v.firstBucket
+      ? ' <em style="color:#c66300;font-weight:400;font-size:11px;margin-left:6px;font-style:italic">1st Bucket</em>'
+      : '';
+    body += '<tr' + rowStyle + '>' +
+      '<td>' + (j+1) + '</td>' +
+      '<td><strong>' + escapeHtml(v.village) + '</strong>' + bucketTag + '</td>' +
+      '<td class="num">' + v.target.toLocaleString() + '</td>' +
+      '<td class="num"><strong>' + v.issued.toLocaleString() + '</strong></td>' +
+      '<td class="num" style="color:#1e88e5">' + (vSinceOct > 0 ? '+' : '') + vSinceOct.toLocaleString() + '</td>' +
+      '<td>' + pctBar(v.issued, v.target) + '</td>' +
+      '<td class="num">' + v.approved.toLocaleString() + '</td>' +
+      '<td>' + pctBar(v.approved, v.issued) + '</td>' +
+      '</tr>';
+  }
+  var totIssuedBaseline = villages.reduce(function(s,v){return s + (v.issuedBaseline || 0);}, 0);
+  var totSinceOct = t.issued - totIssuedBaseline;
+  document.querySelector('#villageTable tbody').innerHTML = body;
+  document.querySelector('#villageTable tfoot').innerHTML =
+    '<tr class="totals-row">' +
+    '<td colspan="2">TOTAL</td>' +
+    '<td class="num">' + t.target.toLocaleString() + '</td>' +
+    '<td class="num"><strong>' + t.issued.toLocaleString() + '</strong></td>' +
+    '<td class="num" style="color:#1e88e5">' + (totSinceOct > 0 ? '+' : '') + totSinceOct.toLocaleString() + '</td>' +
+    '<td>' + pctBar(t.issued, t.target) + '</td>' +
+    '<td class="num">' + t.approved.toLocaleString() + '</td>' +
+    '<td>' + pctBar(t.approved, t.issued) + '</td>' +
+    '</tr>';
+}
+
+function showTehsils() {
+  document.getElementById('viewTehsil').style.display = '';
+  document.getElementById('viewVillage').style.display = 'none';
+  if (window.location.hash) {
+    history.pushState(null, document.title, window.location.pathname + window.location.search);
+  }
+  window.scrollTo(0, 0);
+}
+
+function showVillages(tehsilName) {
+  renderVillages(tehsilName);
+  document.getElementById('viewTehsil').style.display = 'none';
+  document.getElementById('viewVillage').style.display = '';
+  window.location.hash = '#/tehsil/' + encodeURIComponent(tehsilName);
+  window.scrollTo(0, 0);
+}
+
+// ============ CAMP DIRECTOR PROGRESS ============
+function cdNormName(s){
+  return String(s||'').toUpperCase().replace(/[^A-Z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+// Gather, by tehsil, only villages that have a camp director baked in by the generator.
+function cdCollect() {
+  var out = []; // [{tehsil, villages:[{village, target, issued, approved, issuedBaseline, dir:{name,phone}}]}]
+  for (var i = 0; i < DATA.tehsils.length; i++) {
+    var t = DATA.tehsils[i];
+    var vs = [];
+    for (var j = 0; j < t.villages.length; j++) {
+      var v = t.villages[j];
+      if (v.campDirector && v.campDirector.name) {
+        vs.push({
+          village: v.village, target: v.target,
+          issued: v.issued, approved: v.approved,
+          issuedBaseline: v.issuedBaseline || 0,
+          dir: {name: v.campDirector.name, phone: v.campDirector.phone || ''}
+        });
+      }
+    }
+    if (vs.length) out.push({tehsil: t.tehsil, villages: vs});
+  }
+  return out;
+}
+
+function renderCDTehsils() {
+  var data = cdCollect();
+  var body = '';
+  var gTarget=0, gIssued=0, gApproved=0, gBaseline=0, gVillages=0, gDirectors=0, allDirSet={};
+  for (var i = 0; i < data.length; i++) {
+    var t = data[i];
+    var target=0, issued=0, approved=0, baseline=0;
+    var dirSet = {};
+    for (var j = 0; j < t.villages.length; j++) {
+      var v = t.villages[j];
+      target += v.target; issued += v.issued; approved += v.approved; baseline += v.issuedBaseline;
+      var key = cdNormName(v.dir.name) + '|' + (v.dir.phone||'');
+      dirSet[key] = true; allDirSet[key] = true;
+    }
+    var since = issued - baseline;
+    var safe = t.tehsil.replace(/'/g, "\\'");
+    body += '<tr class="clickable" onclick="showCDDirectors(\'' + safe + '\')">' +
+      '<td>' + (i+1) + '</td>' +
+      '<td><strong>' + escapeHtml(t.tehsil) + '</strong></td>' +
+      '<td class="num">' + Object.keys(dirSet).length + '</td>' +
+      '<td class="num">' + t.villages.length + '</td>' +
+      '<td class="num">' + target.toLocaleString() + '</td>' +
+      '<td class="num"><strong>' + issued.toLocaleString() + '</strong></td>' +
+      '<td class="num" style="color:#1e88e5">' + (since>0?'+':'') + since.toLocaleString() + '</td>' +
+      '<td>' + pctBar(issued, target, 'orange') + '</td>' +
+      '<td class="num">' + approved.toLocaleString() + '</td>' +
+      '<td>' + pctBar(approved, issued, 'green') + '</td>' +
+      '<td></td>' +
+      '</tr>';
+    gTarget+=target; gIssued+=issued; gApproved+=approved; gBaseline+=baseline; gVillages+=t.villages.length;
+  }
+  gDirectors = Object.keys(allDirSet).length;
+  var gSince = gIssued - gBaseline;
+  document.querySelector('#cdTehsilTable tbody').innerHTML = body ||
+    '<tr><td colspan="11" style="text-align:center;color:#888;padding:30px">No camp-director assignments yet.</td></tr>';
+  document.querySelector('#cdTehsilTable tfoot').innerHTML =
+    '<tr class="totals-row">' +
+    '<td colspan="2">TOTAL</td>' +
+    '<td class="num">' + gDirectors + '</td>' +
+    '<td class="num">' + gVillages + '</td>' +
+    '<td class="num">' + gTarget.toLocaleString() + '</td>' +
+    '<td class="num"><strong>' + gIssued.toLocaleString() + '</strong></td>' +
+    '<td class="num" style="color:#1e88e5">' + (gSince>0?'+':'') + gSince.toLocaleString() + '</td>' +
+    '<td>' + pctBar(gIssued, gTarget, 'orange') + '</td>' +
+    '<td class="num">' + gApproved.toLocaleString() + '</td>' +
+    '<td>' + pctBar(gApproved, gIssued, 'green') + '</td>' +
+    '<td></td>' +
+    '</tr>';
+  document.getElementById('cdTehsilCount').textContent = data.length + ' tehsils · ' + gVillages + ' villages · ' + gDirectors + ' directors';
+}
+
+function renderCDDirectors(tehsilName) {
+  var data = cdCollect();
+  var t = null;
+  for (var i = 0; i < data.length; i++) if (data[i].tehsil === tehsilName) { t = data[i]; break; }
+  if (!t) { showCDTehsils(); return; }
+  // Group by director key = normName(name)+'|'+phone
+  var groups = {};
+  for (var j = 0; j < t.villages.length; j++) {
+    var v = t.villages[j];
+    var key = cdNormName(v.dir.name) + '|' + (v.dir.phone||'');
+    if (!groups[key]) groups[key] = {name: v.dir.name, phone: v.dir.phone, villages: []};
+    groups[key].villages.push(v);
+  }
+  var dirs = Object.keys(groups).map(function(k){ return Object.assign({key:k}, groups[k]); });
+  dirs.sort(function(a,b){ return b.villages.length - a.villages.length || a.name.localeCompare(b.name); });
+
+  var body = '';
+  var gT=0, gI=0, gA=0, gB=0, gV=0;
+  for (var d = 0; d < dirs.length; d++) {
+    var dir = dirs[d];
+    var target=0, issued=0, approved=0, baseline=0;
+    for (var k = 0; k < dir.villages.length; k++) {
+      target += dir.villages[k].target;
+      issued += dir.villages[k].issued;
+      approved += dir.villages[k].approved;
+      baseline += dir.villages[k].issuedBaseline;
+    }
+    gT+=target; gI+=issued; gA+=approved; gB+=baseline; gV+=dir.villages.length;
+    var since = issued - baseline;
+    var multi = dir.villages.length > 1;
+    var safeT = tehsilName.replace(/'/g, "\\'");
+    var safeK = dir.key.replace(/'/g, "\\'");
+    var onclick = multi ? ' class="clickable" onclick="showCDVillages(\'' + safeT + '\',\'' + safeK + '\')"' : '';
+    var villageNames = dir.villages.map(function(vv){ return escapeHtml(vv.village); }).join(', ');
+    var villagesCell =
+      '<div style="font-weight:600">' + dir.villages.length + (multi ? ' <span style="color:#999">›</span>' : '') + '</div>' +
+      '<div style="font-size:10.5px;color:#666;font-weight:400;line-height:1.3;margin-top:2px;white-space:normal">' + villageNames + '</div>';
+    body += '<tr' + onclick + '>' +
+      '<td>' + (d+1) + '</td>' +
+      '<td><strong>' + escapeHtml(dir.name) + '</strong></td>' +
+      '<td class="num" style="min-width:150px;max-width:260px;text-align:left">' + villagesCell + '</td>' +
+      '<td class="num">' + target.toLocaleString() + '</td>' +
+      '<td class="num"><strong>' + issued.toLocaleString() + '</strong></td>' +
+      '<td class="num" style="color:#1e88e5">' + (since>0?'+':'') + since.toLocaleString() + '</td>' +
+      '<td>' + pctBar(issued, target, 'orange') + '</td>' +
+      '<td class="num">' + approved.toLocaleString() + '</td>' +
+      '<td>' + pctBar(approved, issued, 'green') + '</td>' +
+      '</tr>';
+  }
+  var gSince = gI - gB;
+  document.querySelector('#cdDirectorTable tbody').innerHTML = body;
+  document.querySelector('#cdDirectorTable tfoot').innerHTML =
+    '<tr class="totals-row">' +
+    '<td colspan="2">TOTAL</td>' +
+    '<td class="num">' + gV + '</td>' +
+    '<td class="num">' + gT.toLocaleString() + '</td>' +
+    '<td class="num"><strong>' + gI.toLocaleString() + '</strong></td>' +
+    '<td class="num" style="color:#1e88e5">' + (gSince>0?'+':'') + gSince.toLocaleString() + '</td>' +
+    '<td>' + pctBar(gI, gT, 'orange') + '</td>' +
+    '<td class="num">' + gA.toLocaleString() + '</td>' +
+    '<td>' + pctBar(gA, gI, 'green') + '</td>' +
+    '</tr>';
+  document.getElementById('cdDirTitle').textContent = 'Camp Directors in ' + tehsilName;
+  document.getElementById('cdDirBreadcrumb').textContent = tehsilName;
+  document.getElementById('cdDirCount').textContent = dirs.length + ' directors · ' + t.villages.length + ' villages';
+}
+
+function renderCDVillages(tehsilName, dirKey) {
+  var data = cdCollect();
+  var t = null;
+  for (var i = 0; i < data.length; i++) if (data[i].tehsil === tehsilName) { t = data[i]; break; }
+  if (!t) { showCDTehsils(); return; }
+  var villages = [];
+  var dirName = '';
+  for (var j = 0; j < t.villages.length; j++) {
+    var v = t.villages[j];
+    if (cdNormName(v.dir.name) + '|' + (v.dir.phone||'') === dirKey) {
+      villages.push(v);
+      dirName = v.dir.name;
+    }
+  }
+  if (!villages.length) { showCDDirectors(tehsilName); return; }
+  var body = '';
+  var gT=0, gI=0, gA=0, gB=0;
+  for (var j = 0; j < villages.length; j++) {
+    var v = villages[j];
+    var since = v.issued - v.issuedBaseline;
+    gT+=v.target; gI+=v.issued; gA+=v.approved; gB+=v.issuedBaseline;
+    body += '<tr>' +
+      '<td>' + (j+1) + '</td>' +
+      '<td><strong>' + escapeHtml(v.village) + '</strong></td>' +
+      '<td class="num">' + v.target.toLocaleString() + '</td>' +
+      '<td class="num"><strong>' + v.issued.toLocaleString() + '</strong></td>' +
+      '<td class="num" style="color:#1e88e5">' + (since>0?'+':'') + since.toLocaleString() + '</td>' +
+      '<td>' + pctBar(v.issued, v.target, 'orange') + '</td>' +
+      '<td class="num">' + v.approved.toLocaleString() + '</td>' +
+      '<td>' + pctBar(v.approved, v.issued, 'green') + '</td>' +
+      '</tr>';
+  }
+  var gSince = gI - gB;
+  document.querySelector('#cdVillageTable tbody').innerHTML = body;
+  document.querySelector('#cdVillageTable tfoot').innerHTML =
+    '<tr class="totals-row">' +
+    '<td colspan="2">TOTAL</td>' +
+    '<td class="num">' + gT.toLocaleString() + '</td>' +
+    '<td class="num"><strong>' + gI.toLocaleString() + '</strong></td>' +
+    '<td class="num" style="color:#1e88e5">' + (gSince>0?'+':'') + gSince.toLocaleString() + '</td>' +
+    '<td>' + pctBar(gI, gT, 'orange') + '</td>' +
+    '<td class="num">' + gA.toLocaleString() + '</td>' +
+    '<td>' + pctBar(gA, gI, 'green') + '</td>' +
+    '</tr>';
+  document.getElementById('cdVilTitle').textContent = 'Villages under ' + dirName;
+  document.getElementById('cdVilBreadcrumb').textContent = tehsilName + ' › ' + dirName;
+  document.getElementById('cdVilCount').textContent = villages.length + ' village' + (villages.length>1?'s':'');
+  // Remember L2 context for back button
+  _cdLastTehsilForL3 = tehsilName;
+}
+
+var _cdLastTehsilForL3 = null;
+function cdBackToDirectors() { if (_cdLastTehsilForL3) showCDDirectors(_cdLastTehsilForL3); else showCDTehsils(); }
+
+// ---- View switching + tab control ----
+function hideAllViews() {
+  ['viewTehsil','viewVillage','viewCDTehsil','viewCDDirectors','viewCDVillages'].forEach(function(id){
+    document.getElementById(id).style.display = 'none';
+  });
+}
+function setActiveTab(which) {
+  document.getElementById('tabProgress').classList.toggle('active', which === 'progress');
+  document.getElementById('tabCD').classList.toggle('active', which === 'cd');
+}
+function switchTab(which) {
+  if (which === 'cd') showCDTehsils();
+  else showTehsils();
+}
+function showCDTehsils() {
+  renderCDTehsils();
+  hideAllViews();
+  document.getElementById('viewCDTehsil').style.display = '';
+  setActiveTab('cd');
+  window.location.hash = '#/cd';
+  window.scrollTo(0, 0);
+}
+function showCDDirectors(tehsil) {
+  renderCDDirectors(tehsil);
+  hideAllViews();
+  document.getElementById('viewCDDirectors').style.display = '';
+  setActiveTab('cd');
+  window.location.hash = '#/cd/tehsil/' + encodeURIComponent(tehsil);
+  window.scrollTo(0, 0);
+}
+function showCDVillages(tehsil, dirKey) {
+  renderCDVillages(tehsil, dirKey);
+  hideAllViews();
+  document.getElementById('viewCDVillages').style.display = '';
+  setActiveTab('cd');
+  window.location.hash = '#/cd/tehsil/' + encodeURIComponent(tehsil) + '/dir/' + encodeURIComponent(dirKey);
+  window.scrollTo(0, 0);
+}
+
+// Override showTehsils / showVillages to also set the tab
+var _origShowTehsils = showTehsils;
+showTehsils = function() {
+  hideAllViews();
+  document.getElementById('viewTehsil').style.display = '';
+  setActiveTab('progress');
+  if (window.location.hash) history.pushState(null, document.title, window.location.pathname + window.location.search);
+  window.scrollTo(0, 0);
+};
+var _origShowVillages = showVillages;
+showVillages = function(tehsilName) {
+  renderVillages(tehsilName);
+  hideAllViews();
+  document.getElementById('viewVillage').style.display = '';
+  setActiveTab('progress');
+  window.location.hash = '#/tehsil/' + encodeURIComponent(tehsilName);
+  window.scrollTo(0, 0);
+};
+
+function handleHash() {
+  var hash = window.location.hash.slice(1);
+  // CD routes
+  var m = hash.match(/^\/cd\/tehsil\/([^\/]+)\/dir\/(.+)$/);
+  if (m) { showCDVillages(decodeURIComponent(m[1]), decodeURIComponent(m[2])); return; }
+  m = hash.match(/^\/cd\/tehsil\/(.+)$/);
+  if (m) { showCDDirectors(decodeURIComponent(m[1])); return; }
+  if (hash === '/cd' || hash === '/cd/') { showCDTehsils(); return; }
+  // Main tehsil-view routes
+  m = hash.match(/^\/tehsil\/(.+)$/);
+  if (m) {
+    var name = decodeURIComponent(m[1]);
+    for (var i = 0; i < DATA.tehsils.length; i++) {
+      if (DATA.tehsils[i].tehsil === name) {
+        renderVillages(name);
+        hideAllViews();
+        document.getElementById('viewVillage').style.display = '';
+        setActiveTab('progress');
+        return;
+      }
+    }
+  }
+  // Default: tehsil view
+  hideAllViews();
+  document.getElementById('viewTehsil').style.display = '';
+  setActiveTab('progress');
+}
+
+// Escape key: step back one level
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('viewVillage').style.display !== 'none') { showTehsils(); return; }
+  if (document.getElementById('viewCDVillages').style.display !== 'none') { cdBackToDirectors(); return; }
+  if (document.getElementById('viewCDDirectors').style.display !== 'none') { showCDTehsils(); return; }
+});
+
+var genDate = new Date(DATA.generated);
+document.getElementById('lastUpdated').textContent = genDate.toLocaleString();
+document.getElementById('footerDate').textContent = genDate.toLocaleDateString();
+renderSummary();
+renderTehsils();
+window.addEventListener('hashchange', handleHash);
+handleHash();
+</script>
+</body>
+</html>
