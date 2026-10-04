@@ -2154,22 +2154,211 @@ def mark_complete():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/farmer-id")
-def farmer_id():
-    """Serve the farmer-ID generation HTML. User uploads it as templates/farmer_id.html
-    via GitHub — each upload replaces the previous. If not yet uploaded, show a
-    friendly placeholder. A non-intrusive "back to landing" link is injected at
-    serve time so we never modify the user's uploaded file on disk."""
-    path = os.path.join("templates", "farmer_id.html")
-    if not os.path.exists(path):
-        return render_template("farmer_id_missing.html"), 200
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
+# ============================================================
+# Farmer-ID progress — multi-date tracking
+# ============================================================
+# User uploads dated HTML files named "FARMER_ID DD.MM.YYYY.html" to the
+# templates/ folder (same place the legacy un-dated farmer_id.html lives,
+# or to snapshots/ — both are scanned). Each file is a standalone dashboard
+# produced by the generator. We parse the embedded DATA object once per
+# file (cached by mtime) to pull Target / Issued / Approved totals so the
+# landing page can show day-wise additions.
 
-    # Inject a fixed-position back link right after the opening <body> tag. Use a
-    # scoped <style> block with a specific ID so it can be responsive without
-    # colliding with the uploaded file's own CSS.
-    back_link = (
+# Where we look for farmer-ID HTML files (first path to exist wins per name).
+_FARMER_ID_DIRS = ["templates", "snapshots"]
+
+# Regex for dated file names: "FARMER_ID DD.MM.YYYY.html" (case-insensitive).
+_FARMER_ID_DATED_RE = re.compile(
+    r"^FARMER_ID\s+(\d{1,2})\.(\d{1,2})\.(\d{4})\.html$",
+    re.IGNORECASE,
+)
+
+# In-memory cache: path -> (mtime, parsed totals dict)
+_farmer_id_cache = {}
+_farmer_id_cache_lock = threading.Lock()
+
+
+def _list_farmer_id_files():
+    """Scan the known dirs for farmer-ID HTML files.
+
+    Returns a list of (date_obj_or_None, display_label, filepath) sorted
+    newest first. date_obj is None for the legacy un-dated file."""
+    found = []
+    seen_names = set()
+    for d in _FARMER_ID_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if name in seen_names:
+                continue
+            m = _FARMER_ID_DATED_RE.match(name)
+            if m:
+                try:
+                    day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                    d_obj = date(year, month, day)
+                except ValueError:
+                    continue
+                found.append((d_obj, name, os.path.join(d, name)))
+                seen_names.add(name)
+            elif name.lower() == "farmer_id.html":
+                # Legacy un-dated file — kept for backward compat.
+                found.append((None, name, os.path.join(d, name)))
+                seen_names.add(name)
+    # Sort: dated newest first, legacy last.
+    found.sort(key=lambda t: (t[0] is None, -(t[0].toordinal() if t[0] else 0)))
+    return found
+
+
+def _parse_farmer_id_totals(filepath):
+    """Extract Target / Issued / Approved totals from a farmer-ID HTML file.
+
+    Looks for the embedded `const DATA = {...};` object, parses just enough
+    JSON to sum tehsil-level fields. Cached by (filepath, mtime)."""
+    try:
+        mtime = os.path.getmtime(filepath)
+    except OSError:
+        return None
+    with _farmer_id_cache_lock:
+        cached = _farmer_id_cache.get(filepath)
+        if cached and cached[0] == mtime:
+            return cached[1]
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError:
+        return None
+
+    totals = {"target": 0, "issued": 0, "approved": 0,
+              "issued_baseline": 0, "approved_baseline": 0,
+              "villages": 0, "tehsils": 0, "generated": None}
+    # Find `const DATA = {`
+    m = re.search(r"const\s+DATA\s*=\s*(\{)", content)
+    if not m:
+        with _farmer_id_cache_lock:
+            _farmer_id_cache[filepath] = (mtime, totals)
+        return totals
+    start = m.end() - 1  # position of the opening brace
+    # Walk forward tracking brace depth, respecting strings
+    depth = 0
+    i = start
+    in_str = False
+    esc = False
+    end = None
+    while i < len(content):
+        ch = content[i]
+        if esc:
+            esc = False
+        elif ch == "\\" and in_str:
+            esc = True
+        elif ch == '"' and not esc:
+            in_str = not in_str
+        elif not in_str:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        i += 1
+    if end is None:
+        with _farmer_id_cache_lock:
+            _farmer_id_cache[filepath] = (mtime, totals)
+        return totals
+    data_text = content[start:end]
+    try:
+        data = json.loads(data_text)
+    except Exception:
+        with _farmer_id_cache_lock:
+            _farmer_id_cache[filepath] = (mtime, totals)
+        return totals
+
+    tehsils = data.get("tehsils") or []
+    totals["generated"] = data.get("generated")
+    totals["tehsils"] = len(tehsils)
+    for t in tehsils:
+        if not isinstance(t, dict):
+            continue
+        totals["target"] += int(t.get("target") or 0)
+        totals["issued"] += int(t.get("issued") or 0)
+        totals["approved"] += int(t.get("approved") or 0)
+        totals["issued_baseline"] += int(t.get("issuedBaseline") or 0)
+        totals["approved_baseline"] += int(t.get("approvedBaseline") or 0)
+        vils = t.get("villages") or []
+        totals["villages"] += len(vils) if isinstance(vils, list) else 0
+
+    with _farmer_id_cache_lock:
+        _farmer_id_cache[filepath] = (mtime, totals)
+    return totals
+
+
+def _build_farmer_id_summary(files):
+    """Given the output of _list_farmer_id_files, build a day-wise summary
+    with Issued / Approved and additions since the previous dated file."""
+    # Separate dated files (keep newest first) from legacy
+    dated = [(d, label, path) for (d, label, path) in files if d is not None]
+    legacy = [(d, label, path) for (d, label, path) in files if d is None]
+    # To compute additions properly, iterate oldest-first.
+    dated_asc = sorted(dated, key=lambda t: t[0])
+    rows_asc = []
+    prev = None
+    for d_obj, label, path in dated_asc:
+        totals = _parse_farmer_id_totals(path) or {}
+        issued = int(totals.get("issued") or 0)
+        approved = int(totals.get("approved") or 0)
+        target = int(totals.get("target") or 0)
+        if prev is None:
+            issued_add = None
+            approved_add = None
+        else:
+            issued_add = issued - int(prev.get("issued") or 0)
+            approved_add = approved - int(prev.get("approved") or 0)
+        rows_asc.append({
+            "date_iso": d_obj.isoformat(),
+            "date_label": d_obj.strftime("%d.%m.%Y"),
+            "date_display": d_obj.strftime("%d %b %Y"),
+            "day_of_week": d_obj.strftime("%A"),
+            "filename": label,
+            "target": target,
+            "issued": issued,
+            "approved": approved,
+            "issued_add": issued_add,
+            "approved_add": approved_add,
+            "issue_pct": round(issued / target * 100, 1) if target > 0 else 0,
+            "appr_pct": round(approved / issued * 100, 1) if issued > 0 else 0,
+        })
+        prev = totals
+    # Reverse so newest shows first
+    rows = list(reversed(rows_asc))
+
+    # Legacy file: parse and append after dated rows (if present and not a dup
+    # of the newest dated file).
+    legacy_row = None
+    if legacy:
+        _, label, path = legacy[0]
+        totals = _parse_farmer_id_totals(path) or {}
+        legacy_row = {
+            "date_iso": "legacy",
+            "date_label": "Latest (undated)",
+            "date_display": "Latest (undated)",
+            "day_of_week": "",
+            "filename": label,
+            "target": int(totals.get("target") or 0),
+            "issued": int(totals.get("issued") or 0),
+            "approved": int(totals.get("approved") or 0),
+            "issued_add": None,
+            "approved_add": None,
+            "issue_pct": round(totals.get("issued", 0) / totals.get("target", 1) * 100, 1) if totals.get("target", 0) > 0 else 0,
+            "appr_pct": round(totals.get("approved", 0) / totals.get("issued", 1) * 100, 1) if totals.get("issued", 0) > 0 else 0,
+        }
+    return rows, legacy_row
+
+
+def _farmer_id_back_link():
+    """CSS + anchor injected into any served farmer-ID HTML so the user can
+    jump back to the Progress Monitoring landing without reloading the tab."""
+    return (
         '<style>'
         '#agr-back-hub{'
         'position:fixed;top:14px;left:14px;z-index:9999;'
@@ -2187,19 +2376,117 @@ def farmer_id():
         '#agr-back-hub{left:auto;right:14px;padding:7px 12px;font-size:12px;}'
         '}'
         '</style>'
-        '<a href="/" id="agr-back-hub" '
-        'aria-label="Back to Progress Monitoring landing page">'
-        '\u2190 &nbsp;Progress Monitoring'
+        '<a href="/farmer-id" id="agr-back-hub" '
+        'aria-label="Back to Farmer ID landing page">'
+        '← &nbsp;Farmer ID Index'
         '</a>'
     )
-    body_re = re.compile(r"(<body[^>]*>)", re.IGNORECASE)
-    m = body_re.search(content)
-    if m:
-        content = content[:m.end()] + back_link + content[m.end():]
-    else:
-        content = back_link + content
 
+
+def _serve_farmer_id_file(filepath, include_back_link=True):
+    """Read a farmer-ID HTML file and optionally inject the back link."""
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+    if include_back_link:
+        back_link = _farmer_id_back_link()
+        body_re = re.compile(r"(<body[^>]*>)", re.IGNORECASE)
+        m = body_re.search(content)
+        if m:
+            content = content[:m.end()] + back_link + content[m.end():]
+        else:
+            content = back_link + content
     return Response(content, mimetype="text/html; charset=utf-8")
+
+
+@app.route("/farmer-id/raw/<path:name>")
+def farmer_id_raw(name):
+    """Serve a specific farmer-ID HTML file by its filename. Used by the
+    landing page's iframe and by direct URL navigation. The filename must
+    match one of the files we actually found on disk — we do not accept
+    arbitrary paths."""
+    files = _list_farmer_id_files()
+    for _, label, path in files:
+        if label == name:
+            # Iframe-served pages don't need the floating back link
+            # (the parent landing page already has its own navigation).
+            frame = request.args.get("frame", "").strip() == "1"
+            return _serve_farmer_id_file(path, include_back_link=not frame)
+    return "Not found", 404
+
+
+@app.route("/farmer-id")
+def farmer_id():
+    """Landing page for Farmer-ID generation progress.
+
+    Shows a date-wise additions summary and an embedded view of the
+    selected date's dashboard. Users upload per-day HTML files named
+    "FARMER_ID DD.MM.YYYY.html" to templates/ or snapshots/ in GitHub;
+    the legacy un-dated farmer_id.html is still supported.
+
+    Query params:
+      ?view=DD.MM.YYYY — select a specific date's dashboard for the frame
+      ?view=legacy    — show the legacy un-dated file in the frame
+      ?raw=1          — serve the selected file directly (full-page, with
+                        back link); no landing wrapper
+    """
+    files = _list_farmer_id_files()
+    if not files:
+        return render_template("farmer_id_missing.html"), 200
+
+    # Resolve selected view (defaults to the newest file available)
+    requested = (request.args.get("view") or "").strip()
+    selected = None
+    for d_obj, label, path in files:
+        if requested:
+            if d_obj and d_obj.strftime("%d.%m.%Y") == requested:
+                selected = (d_obj, label, path)
+                break
+            if requested == "legacy" and d_obj is None:
+                selected = (d_obj, label, path)
+                break
+        else:
+            # No preference → first file in the list (which is newest-first).
+            selected = (d_obj, label, path)
+            break
+    if selected is None:
+        # Requested a date we don't have — fall back to newest
+        selected = files[0]
+
+    # ?raw=1 → serve the selected file full-page with the back link
+    if request.args.get("raw", "").strip() == "1":
+        return _serve_farmer_id_file(selected[2], include_back_link=True)
+
+    rows, legacy_row = _build_farmer_id_summary(files)
+
+    # Dropdown options and info about the current selection
+    dropdown = []
+    for d_obj, label, path in files:
+        if d_obj is not None:
+            value = d_obj.strftime("%d.%m.%Y")
+            display = f"{d_obj.strftime('%d %b %Y')} ({d_obj.strftime('%a')})"
+        else:
+            value = "legacy"
+            display = "Latest (undated)"
+        is_selected = (
+            (selected[0] is None and d_obj is None)
+            or (selected[0] is not None and d_obj is not None and selected[0] == d_obj)
+        )
+        dropdown.append({"value": value, "display": display, "selected": is_selected})
+
+    selected_filename = selected[1]
+    selected_display = (
+        selected[0].strftime("%d %b %Y") if selected[0] else "Latest (undated)"
+    )
+
+    return render_template(
+        "farmer_id_landing.html",
+        rows=rows,
+        legacy_row=legacy_row,
+        dropdown=dropdown,
+        selected_filename=selected_filename,
+        selected_display=selected_display,
+        total_files=len(files),
+    )
 
 
 def _check_download_password():
